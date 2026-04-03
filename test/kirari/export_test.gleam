@@ -45,6 +45,8 @@ fn sample_config() -> KirConfig {
     ],
     npm_dev_deps: [],
     security: SecurityConfig(exclude_newer: Error(Nil)),
+    path_deps: [],
+    path_dev_deps: [],
   )
 }
 

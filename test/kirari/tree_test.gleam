@@ -40,6 +40,8 @@ fn test_config() -> KirConfig {
     ],
     npm_dev_deps: [],
     security: SecurityConfig(exclude_newer: Error(Nil)),
+    path_deps: [],
+    path_dev_deps: [],
   )
 }
 
@@ -94,6 +96,8 @@ pub fn empty_tree_test() {
       npm_deps: [],
       npm_dev_deps: [],
       security: SecurityConfig(exclude_newer: Error(Nil)),
+      path_deps: [],
+      path_dev_deps: [],
     )
   let roots = tree.build(empty_config, KirLock(version: 1, packages: []))
   assert roots == []

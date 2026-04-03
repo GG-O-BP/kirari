@@ -46,6 +46,8 @@ fn sample_config() -> KirConfig {
     ],
     npm_dev_deps: [],
     security: SecurityConfig(exclude_newer: Ok("2026-04-01T00:00:00Z")),
+    path_deps: [],
+    path_dev_deps: [],
   )
 }
 
@@ -121,6 +123,8 @@ pub fn add_dependency_test() {
       npm_deps: [],
       npm_dev_deps: [],
       security: types.default_security_config(),
+      path_deps: [],
+      path_dev_deps: [],
     )
   let dep =
     Dependency(
@@ -165,6 +169,8 @@ pub fn add_dependency_upsert_test() {
       npm_deps: [],
       npm_dev_deps: [],
       security: types.default_security_config(),
+      path_deps: [],
+      path_dev_deps: [],
     )
   let updated = config.add_dependency(cfg, dep_v2)
   assert list.length(updated.hex_deps) == 1
@@ -195,6 +201,8 @@ pub fn remove_dependency_test() {
       npm_deps: [dep],
       npm_dev_deps: [],
       security: types.default_security_config(),
+      path_deps: [],
+      path_dev_deps: [],
     )
   let updated = config.remove_dependency(cfg, "foo", Npm)
   assert updated.npm_deps == []

@@ -144,6 +144,8 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
     npm_deps: list.filter(deps, fn(d) { d.registry == Npm && !d.dev }),
     npm_dev_deps: list.filter(deps, fn(d) { d.registry == Npm && d.dev }),
     security: SecurityConfig(exclude_newer: Error(Nil)),
+    path_deps: [],
+    path_dev_deps: [],
   )
 }
 
