@@ -1,4 +1,4 @@
-//// 레거시 내보내기 — kir.toml → gleam.toml + package.json + manifest.toml
+//// 내보내기 — manifest.toml, packages.toml, package.json 생성
 
 import gleam/json
 import gleam/list
@@ -12,104 +12,68 @@ pub type ExportError {
   WriteError(path: String, detail: String)
 }
 
-/// gleam.toml, manifest.toml, package.json을 디렉토리에 내보내기
+/// kir export: manifest.toml + packages.toml + package.json 생성
 pub fn export(
-  config: KirConfig,
-  directory: String,
-) -> Result(List(String), ExportError) {
-  export_with_lock(config, Error(Nil), directory)
-}
-
-/// lock 정보 포함 내보내기 (manifest.toml 생성에 필요)
-pub fn export_with_lock(
   config: KirConfig,
   lock: Result(KirLock, Nil),
   directory: String,
 ) -> Result(List(String), ExportError) {
-  let gleam_path = directory <> "/gleam.toml"
   let written = []
-
-  use _ <- result.try(
-    simplifile.write(gleam_path, to_gleam_toml(config))
-    |> result.map_error(fn(_) { WriteError(gleam_path, "failed to write") }),
-  )
-  let written = [gleam_path, ..written]
-
-  // manifest.toml 생성 (lock이 있을 때)
+  // manifest.toml
   let written = case lock {
     Ok(l) -> {
-      let manifest_path = directory <> "/manifest.toml"
-      case simplifile.write(manifest_path, to_manifest_toml(config, l)) {
-        Ok(_) -> [manifest_path, ..written]
+      let path = directory <> "/manifest.toml"
+      case simplifile.write(path, to_manifest_toml(config, l)) {
+        Ok(_) -> [path, ..written]
         Error(_) -> written
       }
     }
     Error(_) -> written
   }
-
-  // npm 의존성이 있을 때만 package.json 생성
+  // build/packages/packages.toml
+  let written = case lock {
+    Ok(l) -> {
+      let path = directory <> "/build/packages/packages.toml"
+      let _ = simplifile.create_directory_all(directory <> "/build/packages")
+      case simplifile.write(path, to_packages_toml(l)) {
+        Ok(_) -> [path, ..written]
+        Error(_) -> written
+      }
+    }
+    Error(_) -> written
+  }
+  // package.json (npm 의존성 있을 때만)
   case list.append(config.npm_deps, config.npm_dev_deps) {
     [] -> Ok(list.reverse(written))
     _ -> {
-      let pkg_path = directory <> "/package.json"
+      let path = directory <> "/package.json"
       use _ <- result.try(
-        simplifile.write(pkg_path, to_package_json(config))
-        |> result.map_error(fn(_) { WriteError(pkg_path, "failed to write") }),
+        simplifile.write(path, to_package_json(config))
+        |> result.map_error(fn(_) { WriteError(path, "failed to write") }),
       )
-      Ok(list.reverse([pkg_path, ..written]))
+      Ok(list.reverse([path, ..written]))
     }
   }
 }
 
-/// KirConfig에서 gleam.toml 문자열 생성
-pub fn to_gleam_toml(config: KirConfig) -> String {
-  let pkg = config.package
-  let lines = ["name = " <> quote(pkg.name)]
-  let lines = list.append(lines, ["version = " <> quote(pkg.version)])
-  let lines = case pkg.description {
-    "" -> lines
-    d -> list.append(lines, ["description = " <> quote(d)])
-  }
-  let lines = case pkg.licences {
-    [] -> lines
-    ls ->
-      list.append(lines, [
-        "licences = [" <> string.join(list.map(ls, quote), ", ") <> "]",
-      ])
-  }
-  let lines = case pkg.target {
-    "erlang" -> lines
-    t -> list.append(lines, ["target = " <> quote(t)])
-  }
-
-  let deps_section = encode_gleam_deps("dependencies", config.hex_deps)
-  let dev_deps_section =
-    encode_gleam_deps("dev-dependencies", config.hex_dev_deps)
-
-  [
-    string.join(lines, "\n") <> "\n",
-    deps_section,
-    dev_deps_section,
-  ]
-  |> list.filter(fn(s) { s != "" })
-  |> string.join("\n")
+/// kir install/update/add/remove 후: manifest.toml + packages.toml만 생성
+pub fn write_build_metadata(
+  config: KirConfig,
+  lock: KirLock,
+  directory: String,
+) -> Result(Nil, ExportError) {
+  let manifest_path = directory <> "/manifest.toml"
+  use _ <- result.try(
+    simplifile.write(manifest_path, to_manifest_toml(config, lock))
+    |> result.map_error(fn(_) { WriteError(manifest_path, "failed to write") }),
+  )
+  let pkgs_path = directory <> "/build/packages/packages.toml"
+  let _ = simplifile.create_directory_all(directory <> "/build/packages")
+  let _ = simplifile.write(pkgs_path, to_packages_toml(lock))
+  Ok(Nil)
 }
 
-fn encode_gleam_deps(header: String, deps: List(types.Dependency)) -> String {
-  case deps {
-    [] -> ""
-    _ -> {
-      let sorted = list.sort(deps, fn(a, b) { string.compare(a.name, b.name) })
-      let lines =
-        list.map(sorted, fn(dep) {
-          dep.name <> " = " <> quote(dep.version_constraint)
-        })
-      "[" <> header <> "]\n" <> string.join(lines, "\n") <> "\n"
-    }
-  }
-}
-
-/// KirConfig에서 package.json 문자열 생성
+/// package.json 문자열 생성
 pub fn to_package_json(config: KirConfig) -> String {
   let deps =
     list.map(config.npm_deps, fn(d) {
@@ -132,10 +96,9 @@ pub fn to_package_json(config: KirConfig) -> String {
   <> "\n"
 }
 
-/// KirConfig + KirLock에서 Gleam manifest.toml 문자열 생성
+/// manifest.toml 문자열 생성
 pub fn to_manifest_toml(config: KirConfig, lock: KirLock) -> String {
   let header = "# This file was generated by kirari\n"
-  // Hex 패키지만 포함 (gleam은 npm을 모름)
   let hex_packages =
     list.filter(lock.packages, fn(p) { p.registry == Hex })
     |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
@@ -153,7 +116,6 @@ pub fn to_manifest_toml(config: KirConfig, lock: KirLock) -> String {
     })
   let packages_section =
     "packages = [\n" <> string.join(package_entries, ",\n") <> "\n]\n"
-  // [requirements] — 직접 Hex 의존성만
   let all_hex_deps =
     list.append(config.hex_deps, config.hex_dev_deps)
     |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
@@ -166,6 +128,16 @@ pub fn to_manifest_toml(config: KirConfig, lock: KirLock) -> String {
     _ -> "\n[requirements]\n" <> string.join(req_entries, "\n") <> "\n"
   }
   header <> "\n" <> packages_section <> requirements_section
+}
+
+/// packages.toml 문자열 생성 (gleam build 다운로드 스킵용)
+pub fn to_packages_toml(lock: KirLock) -> String {
+  let hex_packages =
+    list.filter(lock.packages, fn(p) { p.registry == Hex })
+    |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+  let entries =
+    list.map(hex_packages, fn(p) { p.name <> " = " <> quote(p.version) })
+  "[packages]\n" <> string.join(entries, "\n") <> "\n"
 }
 
 fn quote(s: String) -> String {

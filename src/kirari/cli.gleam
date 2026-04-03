@@ -55,6 +55,46 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["publish"], do: publish_cmd())
   |> glint.add(at: ["hex", "retire"], do: hex_retire_cmd())
   |> glint.add(at: ["hex", "unretire"], do: hex_unretire_cmd())
+  |> glint.add(at: ["build"], do: build_cmd())
+  |> glint.add(at: ["run"], do: run_cmd())
+  |> glint.add(at: ["test"], do: test_cmd())
+  |> glint.add(at: ["check"], do: check_cmd())
+  |> glint.add(
+    at: ["format"],
+    do: gleam_passthrough_cmd("Format source code", "gleam format"),
+  )
+  |> glint.add(
+    at: ["new"],
+    do: gleam_passthrough_cmd("Create a new Gleam project", "gleam new"),
+  )
+  |> glint.add(
+    at: ["shell"],
+    do: gleam_passthrough_cmd("Start an Erlang shell", "gleam shell"),
+  )
+  |> glint.add(
+    at: ["lsp"],
+    do: gleam_passthrough_cmd("Run the language server", "gleam lsp"),
+  )
+  |> glint.add(at: ["dev"], do: dev_cmd())
+  |> glint.add(
+    at: ["fix"],
+    do: gleam_passthrough_cmd("Rewrite deprecated code", "gleam fix"),
+  )
+  |> glint.add(
+    at: ["docs", "build"],
+    do: gleam_passthrough_cmd("Build documentation", "gleam docs build"),
+  )
+  |> glint.add(
+    at: ["docs", "publish"],
+    do: gleam_passthrough_cmd("Publish documentation", "gleam docs publish"),
+  )
+  |> glint.add(
+    at: ["docs", "remove"],
+    do: gleam_passthrough_cmd(
+      "Remove published documentation",
+      "gleam docs remove",
+    ),
+  )
   |> glint.add(at: ["export"], do: export_cmd())
   |> glint.add(
     at: ["export", "erlang-shipment"],
@@ -169,7 +209,7 @@ fn root_cmd() -> glint.Command(Nil) {
     io.println("kir — unified package manager for Gleam")
     io.println("")
     io.println("Commands:")
-    io.println("  init        Migrate gleam.toml + package.json → kir.toml")
+    io.println("  init        Add kirari sections to gleam.toml")
     io.println("  install     Resolve and install dependencies")
     io.println("  update      Update all to latest compatible versions")
     io.println("  add         Add a dependency")
@@ -181,12 +221,12 @@ fn root_cmd() -> glint.Command(Nil) {
     io.println("  publish     Publish package to Hex")
     io.println("  hex retire  Retire a Hex release")
     io.println("  hex unretire  Un-retire a Hex release")
-    io.println("  export      Export kir.toml → gleam.toml + package.json")
+    io.println("  export      Export manifest.toml + package.json")
   })
 }
 
 fn init_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Migrate gleam.toml + package.json → kir.toml")
+  use <- glint.command_help("Add kirari sections to gleam.toml")
   glint.command(fn(_named, _args, _flags) {
     case do_init(".") {
       Ok(_) -> Nil
@@ -297,6 +337,35 @@ fn deps_download_cmd() -> glint.Command(Nil) {
   })
 }
 
+fn build_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Build the project", "gleam build")
+}
+
+fn run_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Run the project", "gleam run")
+}
+
+fn test_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Run the tests", "gleam test")
+}
+
+fn check_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Type check the project", "gleam check")
+}
+
+fn dev_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Run the dev entrypoint", "gleam dev")
+}
+
+/// install(store → hardlink) 후 gleam 명령어 실행
+fn install_then_gleam_cmd(help: String, cmd: String) -> glint.Command(Nil) {
+  use <- glint.command_help(help)
+  glint.command(fn(_named, _args, _flags) {
+    let _ = do_install_quiet(".")
+    run_gleam_cmd(cmd)
+  })
+}
+
 fn clean_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Remove build artifacts and store cache")
   glint.command(fn(_named, _args, _flags) { do_clean(".") })
@@ -375,7 +444,7 @@ fn tree_cmd() -> glint.Command(Nil) {
 }
 
 fn export_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Export kir.toml → gleam.toml + package.json")
+  use <- glint.command_help("Export manifest.toml + package.json")
   glint.command(fn(_named, _args, _flags) {
     case do_export(".") {
       Ok(_) -> Nil
@@ -389,22 +458,22 @@ fn export_cmd() -> glint.Command(Nil) {
 // ---------------------------------------------------------------------------
 
 fn do_init(dir: String) -> Result(Nil, KirError) {
-  io.println("Migrating to kir.toml...")
-  use gleam_config <- result.try(
-    migrate.read_gleam_toml(dir)
-    |> result.map_error(MigrateErr),
+  io.println("Initializing kirari...")
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
   )
-  // package.json이 있으면 npm 의존성도 병합
+  // package.json이 있으면 npm 의존성을 [npm-dependencies]에 병합
   let npm_deps = case migrate.read_package_json(dir) {
     Ok(deps) -> deps
     Error(_) -> []
   }
-  let merged = merge_npm_deps(gleam_config, npm_deps)
+  let merged = merge_npm_deps(cfg, npm_deps)
   use _ <- result.try(
-    config.write_kir_toml(merged, dir)
+    config.write_config(merged, dir)
     |> result.map_error(ConfigErr),
   )
-  io.println(ansi.green("Created") <> " kir.toml")
+  io.println(ansi.green("Initialized") <> " gleam.toml with kirari sections")
   Ok(Nil)
 }
 
@@ -414,7 +483,7 @@ fn do_install(
   exclude_newer: String,
 ) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   // --exclude-newer 플래그로 오버라이드
@@ -474,7 +543,7 @@ fn do_install(
         <> " packages, wrote kir.lock",
       )
       // gleam build 호환: gleam.toml + manifest.toml 자동 생성
-      let _ = export.export_with_lock(cfg, Ok(lock), dir)
+      let _ = export.write_build_metadata(cfg, lock, dir)
       // FFI 감지: 미선언 npm import 경고
       warn_undeclared_npm(dir, cfg)
       Ok(Nil)
@@ -482,9 +551,35 @@ fn do_install(
   }
 }
 
+/// install과 동일하되 출력 없이 수행 (kir build/run/test/check/dev 용)
+fn do_install_quiet(dir: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let existing_lock =
+    lockfile.read(dir)
+    |> result.map_error(fn(_) { Nil })
+  use resolve_result <- result.try(
+    resolver.resolve_full(cfg, existing_lock)
+    |> result.map_error(ResolveErr),
+  )
+  use installed <- result.try(
+    pipeline.run(resolve_result, dir)
+    |> result.map_error(PipelineErr),
+  )
+  let lock = lockfile.from_packages(installed)
+  use _ <- result.try(
+    lockfile.write(lock, dir)
+    |> result.map_error(LockErr),
+  )
+  let _ = export.write_build_metadata(cfg, lock, dir)
+  Ok(Nil)
+}
+
 fn do_update(dir: String) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   io.println("Updating all dependencies...")
@@ -515,7 +610,7 @@ fn do_update(dir: String) -> Result(Nil, KirError) {
     <> int.to_string(list.length(installed))
     <> " packages, wrote kir.lock",
   )
-  let _ = export.export_with_lock(cfg, Ok(lock), dir)
+  let _ = export.write_build_metadata(cfg, lock, dir)
   Ok(Nil)
 }
 
@@ -526,7 +621,7 @@ fn do_add(
   is_dev: Bool,
 ) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   let registry = case is_npm {
@@ -545,7 +640,7 @@ fn do_add(
     )
   let updated = config.add_dependency(cfg, dep)
   use _ <- result.try(
-    config.write_kir_toml(updated, dir)
+    config.write_config(updated, dir)
     |> result.map_error(ConfigErr),
   )
   io.println(
@@ -565,7 +660,7 @@ fn do_add(
 
 fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   let registry = case is_npm {
@@ -574,7 +669,7 @@ fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
   }
   let updated = config.remove_dependency(cfg, name, registry)
   use _ <- result.try(
-    config.write_kir_toml(updated, dir)
+    config.write_config(updated, dir)
     |> result.map_error(ConfigErr),
   )
   io.println(
@@ -590,7 +685,7 @@ fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
 
 fn do_tree(dir: String) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   use lock <- result.try(
@@ -608,11 +703,14 @@ fn do_tree(dir: String) -> Result(Nil, KirError) {
 
 fn do_export(dir: String) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
+  let lock =
+    lockfile.read(dir)
+    |> result.map_error(fn(_) { Nil })
   use paths <- result.try(
-    export.export(cfg, dir)
+    export.export(cfg, lock, dir)
     |> result.map_error(ExportErr),
   )
   list.each(paths, fn(p) { io.println("Wrote " <> p) })
@@ -621,7 +719,7 @@ fn do_export(dir: String) -> Result(Nil, KirError) {
 
 fn do_deps_list(dir: String) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   let all_deps =
@@ -655,7 +753,7 @@ fn do_deps_list(dir: String) -> Result(Nil, KirError) {
 
 fn do_deps_download(dir: String) -> Result(Nil, KirError) {
   use cfg <- result.try(
-    config.read_kir_toml(dir)
+    config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
   let existing_lock =

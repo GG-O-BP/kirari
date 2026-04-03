@@ -1,4 +1,5 @@
 import gleam/list
+import gleam/string
 import gleeunit
 import kirari/config
 import kirari/types.{
@@ -8,10 +9,6 @@ import kirari/types.{
 pub fn main() -> Nil {
   gleeunit.main()
 }
-
-// ---------------------------------------------------------------------------
-// kir.toml round-trip
-// ---------------------------------------------------------------------------
 
 fn sample_config() -> KirConfig {
   KirConfig(
@@ -52,40 +49,21 @@ fn sample_config() -> KirConfig {
   )
 }
 
-pub fn encode_kir_toml_test() {
-  let encoded = config.encode_kir_toml(sample_config())
-  assert {
-    let assert Ok(True) =
-      encoded
-      |> has_substring("[package]")
-    True
-  }
-  assert {
-    let assert Ok(True) = encoded |> has_substring("name = \"my_app\"")
-    True
-  }
-  assert {
-    let assert Ok(True) = encoded |> has_substring("[hex]")
-    True
-  }
-  assert {
-    let assert Ok(True) = encoded |> has_substring("[hex.dev]")
-    True
-  }
-  assert {
-    let assert Ok(True) = encoded |> has_substring("[npm]")
-    True
-  }
-  assert {
-    let assert Ok(True) = encoded |> has_substring("[security]")
-    True
-  }
+pub fn encode_config_test() {
+  let encoded = config.encode_config(sample_config())
+  assert string.contains(encoded, "name = \"my_app\"")
+  assert string.contains(encoded, "[dependencies]")
+  assert string.contains(encoded, "[dev-dependencies]")
+  assert string.contains(encoded, "[npm-dependencies]")
+  assert string.contains(encoded, "[security]")
+  // gleam.toml 포맷: [package] 섹션 없음
+  assert !string.contains(encoded, "[package]")
 }
 
-pub fn kir_toml_roundtrip_test() {
+pub fn config_roundtrip_test() {
   let original = sample_config()
-  let encoded = config.encode_kir_toml(original)
-  let assert Ok(parsed) = config.parse_kir_toml(encoded)
+  let encoded = config.encode_config(original)
+  let assert Ok(parsed) = config.parse_config(encoded)
   assert parsed.package.name == original.package.name
   assert parsed.package.version == original.package.version
   assert parsed.package.description == original.package.description
@@ -97,33 +75,26 @@ pub fn kir_toml_roundtrip_test() {
 }
 
 // ---------------------------------------------------------------------------
-// kir.toml 파싱 에러
+// 파싱 에러
 // ---------------------------------------------------------------------------
 
-pub fn parse_kir_toml_missing_package_test() {
-  let toml = "[hex]\nfoo = \"1.0.0\"\n"
-  let assert Error(config.InvalidField("package", _)) =
-    config.parse_kir_toml(toml)
+pub fn parse_config_missing_name_test() {
+  let toml = "version = \"1.0.0\"\n[dependencies]\n"
+  let assert Error(config.InvalidField("name", _)) = config.parse_config(toml)
 }
 
-pub fn parse_kir_toml_missing_name_test() {
-  let toml = "[package]\nversion = \"1.0.0\"\n"
-  let assert Error(config.InvalidField("package.name", _)) =
-    config.parse_kir_toml(toml)
-}
-
-pub fn parse_kir_toml_invalid_toml_test() {
+pub fn parse_config_invalid_toml_test() {
   let assert Error(config.ParseError(_)) =
-    config.parse_kir_toml("[[[ invalid toml")
+    config.parse_config("[[[ invalid toml")
 }
 
 // ---------------------------------------------------------------------------
-// 빈 섹션 처리
+// 최소 설정
 // ---------------------------------------------------------------------------
 
-pub fn parse_kir_toml_minimal_test() {
-  let toml = "[package]\nname = \"minimal\"\nversion = \"0.1.0\"\n"
-  let assert Ok(cfg) = config.parse_kir_toml(toml)
+pub fn parse_config_minimal_test() {
+  let toml = "name = \"minimal\"\nversion = \"0.1.0\"\n"
+  let assert Ok(cfg) = config.parse_config(toml)
   assert cfg.package.name == "minimal"
   assert cfg.hex_deps == []
   assert cfg.npm_deps == []
@@ -227,14 +198,4 @@ pub fn remove_dependency_test() {
     )
   let updated = config.remove_dependency(cfg, "foo", Npm)
   assert updated.npm_deps == []
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-import gleam/string
-
-fn has_substring(haystack: String, needle: String) -> Result(Bool, Nil) {
-  Ok(string.contains(haystack, needle))
 }

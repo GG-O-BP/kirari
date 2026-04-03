@@ -13,4 +13,3 @@ kir.lock
 .claude/settings.local.json
 
 manifest.toml
-gleam.toml

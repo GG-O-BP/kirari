@@ -48,22 +48,6 @@ fn sample_config() -> KirConfig {
   )
 }
 
-pub fn to_gleam_toml_test() {
-  let output = export.to_gleam_toml(sample_config())
-  assert string.contains(output, "name = \"my_app\"")
-  assert string.contains(output, "version = \"1.0.0\"")
-  assert string.contains(output, "[dependencies]")
-  assert string.contains(output, "gleam_stdlib")
-  assert string.contains(output, "[dev-dependencies]")
-  assert string.contains(output, "gleeunit")
-}
-
-pub fn to_gleam_toml_no_npm_test() {
-  let output = export.to_gleam_toml(sample_config())
-  // gleam.toml에는 npm 의존성이 포함되지 않아야 함
-  assert !string.contains(output, "highlight.js")
-}
-
 pub fn to_package_json_test() {
   let output = export.to_package_json(sample_config())
   assert string.contains(output, "\"highlight.js\"")

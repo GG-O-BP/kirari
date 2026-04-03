@@ -1,4 +1,6 @@
-//// kir.toml 파싱/직렬화 및 의존성 조작
+//// gleam.toml 파싱/직렬화 및 의존성 조작
+//// gleam 네이티브 섹션([dependencies], [dev-dependencies])과
+//// kirari 확장 섹션([npm-dependencies], [dev-npm-dependencies], [security])을 통합 관리
 
 import gleam/dict.{type Dict}
 import gleam/list
@@ -21,34 +23,42 @@ pub type ConfigError {
 }
 
 // ---------------------------------------------------------------------------
-// kir.toml 읽기
+// gleam.toml 읽기
 // ---------------------------------------------------------------------------
 
-/// 디렉토리에서 kir.toml을 읽어 KirConfig로 변환
-pub fn read_kir_toml(directory: String) -> Result(KirConfig, ConfigError) {
-  let path = directory <> "/kir.toml"
+/// 디렉토리에서 gleam.toml을 읽어 KirConfig로 변환
+pub fn read_config(directory: String) -> Result(KirConfig, ConfigError) {
+  let path = directory <> "/gleam.toml"
   use content <- result.try(
     simplifile.read(path)
     |> result.map_error(fn(_) { FileNotFound(path) }),
   )
-  parse_kir_toml(content)
+  parse_config(content)
 }
 
-/// kir.toml 문자열을 파싱
-pub fn parse_kir_toml(content: String) -> Result(KirConfig, ConfigError) {
+/// gleam.toml 문자열을 파싱
+pub fn parse_config(content: String) -> Result(KirConfig, ConfigError) {
   use doc <- result.try(
     tom.parse(content)
     |> result.map_error(fn(e) { ParseError(string.inspect(e)) }),
   )
-  decode_kir_config(doc)
+  decode_config(doc)
 }
 
-fn decode_kir_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
-  use package <- result.try(decode_package_section(doc))
-  let hex_deps = decode_deps_from_table(doc, ["hex"], Hex, False)
-  let hex_dev_deps = decode_deps_from_table(doc, ["hex", "dev"], Hex, True)
-  let npm_deps = decode_deps_from_table(doc, ["npm"], Npm, False)
-  let npm_dev_deps = decode_deps_from_table(doc, ["npm", "dev"], Npm, True)
+fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
+  use package <- result.try(decode_package_info(doc))
+  // Hex 의존성: [dependencies], [dev-dependencies] or [dev_dependencies]
+  let hex_deps = decode_deps_from_table(doc, ["dependencies"], Hex, False)
+  let hex_dev_deps = case
+    decode_deps_from_table(doc, ["dev-dependencies"], Hex, True)
+  {
+    [] -> decode_deps_from_table(doc, ["dev_dependencies"], Hex, True)
+    deps -> deps
+  }
+  // npm 의존성: [npm-dependencies], [dev-npm-dependencies]
+  let npm_deps = decode_deps_from_table(doc, ["npm-dependencies"], Npm, False)
+  let npm_dev_deps =
+    decode_deps_from_table(doc, ["dev-npm-dependencies"], Npm, True)
   let security = decode_security_section(doc)
   Ok(KirConfig(
     package: package,
@@ -60,29 +70,19 @@ fn decode_kir_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) 
   ))
 }
 
-fn decode_package_section(
+/// gleam.toml 최상위 필드에서 패키지 정보 읽기
+fn decode_package_info(
   doc: Dict(String, Toml),
 ) -> Result(PackageInfo, ConfigError) {
-  use table <- result.try(
-    tom.get_table(doc, ["package"])
-    |> result.map_error(fn(_) {
-      InvalidField("package", "missing [package] section")
-    }),
-  )
   use name <- result.try(
-    tom.get_string(table, ["name"])
-    |> result.map_error(fn(_) { InvalidField("package.name", "required") }),
+    tom.get_string(doc, ["name"])
+    |> result.map_error(fn(_) { InvalidField("name", "required in gleam.toml") }),
   )
-  use version <- result.try(
-    tom.get_string(table, ["version"])
-    |> result.map_error(fn(_) { InvalidField("package.version", "required") }),
-  )
-  let description = tom.get_string(table, ["description"]) |> result.unwrap("")
-  let target = tom.get_string(table, ["target"]) |> result.unwrap("erlang")
-  let licences = decode_string_array(table, ["licences"])
-  let repository =
-    tom.get_string(table, ["repository"])
-    |> result.map_error(fn(_) { Nil })
+  let version = tom.get_string(doc, ["version"]) |> result.unwrap("0.1.0")
+  let description = tom.get_string(doc, ["description"]) |> result.unwrap("")
+  let target = tom.get_string(doc, ["target"]) |> result.unwrap("erlang")
+  let licences = decode_string_array(doc, ["licences"])
+  let repository = decode_repository(doc)
   Ok(PackageInfo(
     name: name,
     version: version,
@@ -91,6 +91,23 @@ fn decode_package_section(
     licences: licences,
     repository: repository,
   ))
+}
+
+fn decode_repository(doc: Dict(String, Toml)) -> Result(String, Nil) {
+  case tom.get_table(doc, ["repository"]) {
+    Ok(repo_table) ->
+      case
+        tom.get_string(repo_table, ["type"]),
+        tom.get_string(repo_table, ["user"]),
+        tom.get_string(repo_table, ["repo"])
+      {
+        Ok(t), Ok(u), Ok(r) -> Ok(t <> ":" <> u <> "/" <> r)
+        _, _, _ -> Error(Nil)
+      }
+    Error(_) ->
+      tom.get_string(doc, ["repository"])
+      |> result.map_error(fn(_) { Nil })
+  }
 }
 
 fn decode_string_array(
@@ -128,7 +145,6 @@ fn decode_deps_from_table(
               registry: registry,
               dev: dev,
             ))
-          // sub-table ("dev" 등) 은 건너뛴다
           _ -> Error(Nil)
         }
       })
@@ -145,48 +161,51 @@ fn decode_security_section(doc: Dict(String, Toml)) -> SecurityConfig {
 }
 
 // ---------------------------------------------------------------------------
-// kir.toml 쓰기
+// gleam.toml 쓰기
 // ---------------------------------------------------------------------------
 
-/// KirConfig를 디렉토리의 kir.toml에 기록
-pub fn write_kir_toml(
+/// KirConfig를 디렉토리의 gleam.toml에 기록
+pub fn write_config(
   config: KirConfig,
   directory: String,
 ) -> Result(Nil, ConfigError) {
-  let path = directory <> "/kir.toml"
-  let content = encode_kir_toml(config)
+  let path = directory <> "/gleam.toml"
+  let content = encode_config(config)
   simplifile.write(path, content)
   |> result.map_error(fn(_) { WriteError(path, "failed to write file") })
 }
 
-/// KirConfig를 TOML 문자열로 직렬화
-pub fn encode_kir_toml(config: KirConfig) -> String {
+/// KirConfig를 gleam.toml TOML 문자열로 직렬화
+pub fn encode_config(config: KirConfig) -> String {
   [
-    encode_package_section(config.package),
-    encode_dep_section("hex", config.hex_deps),
-    encode_dep_section("hex.dev", config.hex_dev_deps),
-    encode_dep_section("npm", config.npm_deps),
-    encode_dep_section("npm.dev", config.npm_dev_deps),
+    encode_top_level(config.package),
+    encode_dep_section("dependencies", config.hex_deps),
+    encode_dep_section("dev-dependencies", config.hex_dev_deps),
+    encode_dep_section("npm-dependencies", config.npm_deps),
+    encode_dep_section("dev-npm-dependencies", config.npm_dev_deps),
     encode_security_section(config.security),
   ]
   |> list.filter(fn(s) { s != "" })
   |> string.join("\n")
 }
 
-fn encode_package_section(pkg: PackageInfo) -> String {
-  let lines = ["[package]", "name = " <> quote(pkg.name)]
+fn encode_top_level(pkg: PackageInfo) -> String {
+  let lines = ["name = " <> quote(pkg.name)]
   let lines = list.append(lines, ["version = " <> quote(pkg.version)])
   let lines = case pkg.description {
     "" -> lines
     d -> list.append(lines, ["description = " <> quote(d)])
   }
-  let lines = list.append(lines, ["target = " <> quote(pkg.target)])
   let lines = case pkg.licences {
     [] -> lines
     ls ->
       list.append(lines, [
         "licences = [" <> string.join(list.map(ls, quote), ", ") <> "]",
       ])
+  }
+  let lines = case pkg.target {
+    "erlang" -> lines
+    t -> list.append(lines, ["target = " <> quote(t)])
   }
   let lines = case pkg.repository {
     Ok(url) -> list.append(lines, ["repository = " <> quote(url)])
@@ -229,7 +248,6 @@ fn quote_key(key: String) -> String {
           case cp {
             [cp] -> {
               let n = string.utf_codepoint_to_int(cp)
-              // a-z, A-Z, 0-9
               { n >= 0x61 && n <= 0x7A }
               || { n >= 0x41 && n <= 0x5A }
               || { n >= 0x30 && n <= 0x39 }
