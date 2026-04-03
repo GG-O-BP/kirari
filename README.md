@@ -1,4 +1,4 @@
-# kir
+# kirari
 
 A unified package manager for Gleam that replaces `gleam.toml` + `package.json` with a single `kir.toml`. Manages both Hex and npm dependencies in one workflow.
 
