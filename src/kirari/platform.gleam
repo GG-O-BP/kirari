@@ -30,3 +30,7 @@ pub fn halt(code: Int) -> Nil
 /// 지정 경로 아래에 임시 디렉토리 생성
 @external(erlang, "kirari_ffi", "make_temp_dir")
 pub fn make_temp_dir(base: String) -> Result(String, String)
+
+/// 셸 명령어 실행 — 성공 시 stdout, 실패 시 #(exit_code, output)
+@external(erlang, "kirari_ffi", "run_command")
+pub fn run_command(cmd: String) -> Result(String, #(Int, String))

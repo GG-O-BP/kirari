@@ -6,7 +6,8 @@
     atomic_rename/2,
     get_home_dir/0,
     halt/1,
-    make_temp_dir/1
+    make_temp_dir/1,
+    run_command/1
 ]).
 
 %% tar/tgz 압축 해제
@@ -64,4 +65,20 @@ make_temp_dir(Base) when is_binary(Base) ->
     case file:make_dir(Dir) of
         ok -> {ok, list_to_binary(Dir)};
         {error, Reason} -> {error, atom_to_binary(Reason, utf8)}
+    end.
+
+%% 셸 명령어 실행 — 종료 코드와 출력 반환
+run_command(Cmd) when is_binary(Cmd) ->
+    CmdStr = binary_to_list(Cmd),
+    Port = open_port({spawn, CmdStr}, [stream, exit_status, binary, stderr_to_stdout]),
+    collect_port(Port, <<>>).
+
+collect_port(Port, Acc) ->
+    receive
+        {Port, {data, Data}} ->
+            collect_port(Port, <<Acc/binary, Data/binary>>);
+        {Port, {exit_status, 0}} ->
+            {ok, Acc};
+        {Port, {exit_status, Code}} ->
+            {error, {Code, Acc}}
     end.

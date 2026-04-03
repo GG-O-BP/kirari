@@ -26,6 +26,8 @@ gleam build
 
 ## Commands
 
+### Dependency Management
+
 | Command | Description |
 |---------|-------------|
 | `kir init` | Migrate from `gleam.toml` + `package.json` to `kir.toml` |
@@ -33,15 +35,38 @@ gleam build
 | `kir update` | Update all dependencies to latest compatible versions (ignores lock) |
 | `kir add <pkg> [--npm] [--dev]` | Add a dependency and install (auto-detects Hex or npm) |
 | `kir remove <pkg> [--npm]` | Remove a dependency and reinstall |
+| `kir deps list` | List all dependencies with versions and registries |
+| `kir deps download` | Download dependencies without installing |
 | `kir tree` | Print the unified dependency tree |
-| `kir export` | Export `kir.toml` back to `gleam.toml` + `package.json` + `manifest.toml` |
+| `kir clean` | Remove `build/` and `node_modules/` directories |
+
+### Publishing
+
+| Command | Description |
+|---------|-------------|
+| `kir publish [--replace] [--yes]` | Export to `gleam.toml` then publish to Hex |
+| `kir hex retire <pkg> <ver> <reason> [msg]` | Retire a release from Hex |
+| `kir hex unretire <pkg> <ver>` | Un-retire a release from Hex |
+
+### Export
+
+| Command | Description |
+|---------|-------------|
+| `kir export` | Export `kir.toml` to `gleam.toml` + `package.json` + `manifest.toml` |
+| `kir export erlang-shipment` | Export precompiled Erlang for deployment |
+| `kir export hex-tarball` | Export package as tarball for Hex publishing |
+| `kir export javascript-prelude` | Export JavaScript prelude module |
+| `kir export typescript-prelude` | Export TypeScript prelude module |
+| `kir export package-interface` | Export package interface as JSON |
 
 ### Flags
 
 - `--frozen` — Verify lockfile matches resolution without downloading or installing. For CI.
-- `--exclude-newer=<TIMESTAMP>` — Exclude versions published after the given RFC 3339 timestamp. Overrides `[security] exclude-newer` in `kir.toml`.
+- `--exclude-newer=<TIMESTAMP>` — Exclude versions published after the given RFC 3339 timestamp.
 - `--npm` — Force npm registry (for `add` and `remove`).
 - `--dev` — Add as dev dependency (for `add`).
+- `--replace` — Replace existing version on Hex (for `publish`).
+- `--yes` — Skip confirmation prompt (for `publish`).
 
 ## kir.toml
 
@@ -99,7 +124,8 @@ CI usage: `kir install --frozen` fails if the lock doesn't match resolved depend
 | **`exclude-newer`** | Not available | `[security] exclude-newer` or `--exclude-newer` flag |
 | **Dependency tree** | `gleam deps tree` | `kir tree` |
 | **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
-| **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` generates `gleam.toml` + `package.json` + `manifest.toml` |
+| **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` + all gleam export subcommands via passthrough |
+| **Publishing** | `gleam publish`, `gleam hex retire/unretire` | `kir publish`, `kir hex retire/unretire` (delegates to gleam) |
 | **Migration** | N/A | `kir init` reads existing `gleam.toml` + `package.json` into `kir.toml` |
 | **Written in** | Rust | Gleam |
 

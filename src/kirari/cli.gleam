@@ -13,11 +13,13 @@ import kirari/ffi as ffi_detect
 import kirari/lockfile
 import kirari/migrate
 import kirari/pipeline
+import kirari/platform
 import kirari/resolver
 import kirari/tree
 import kirari/types.{
   type Dependency, type KirConfig, Dependency, Hex, KirConfig, Npm,
 }
+import simplifile
 
 /// 최상위 에러 타입 — 모든 모듈 에러를 래핑
 pub type KirError {
@@ -46,8 +48,49 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["add"], do: add_cmd())
   |> glint.add(at: ["remove"], do: remove_cmd())
   |> glint.add(at: ["update"], do: update_cmd())
+  |> glint.add(at: ["deps", "list"], do: deps_list_cmd())
+  |> glint.add(at: ["deps", "download"], do: deps_download_cmd())
   |> glint.add(at: ["tree"], do: tree_cmd())
+  |> glint.add(at: ["clean"], do: clean_cmd())
+  |> glint.add(at: ["publish"], do: publish_cmd())
+  |> glint.add(at: ["hex", "retire"], do: hex_retire_cmd())
+  |> glint.add(at: ["hex", "unretire"], do: hex_unretire_cmd())
   |> glint.add(at: ["export"], do: export_cmd())
+  |> glint.add(
+    at: ["export", "erlang-shipment"],
+    do: gleam_passthrough_cmd(
+      "Export precompiled Erlang for deployment",
+      "gleam export erlang-shipment",
+    ),
+  )
+  |> glint.add(
+    at: ["export", "hex-tarball"],
+    do: gleam_passthrough_cmd(
+      "Export package as tarball for Hex publishing",
+      "gleam export hex-tarball",
+    ),
+  )
+  |> glint.add(
+    at: ["export", "javascript-prelude"],
+    do: gleam_passthrough_cmd(
+      "Export JavaScript prelude module",
+      "gleam export javascript-prelude",
+    ),
+  )
+  |> glint.add(
+    at: ["export", "typescript-prelude"],
+    do: gleam_passthrough_cmd(
+      "Export TypeScript prelude module",
+      "gleam export typescript-prelude",
+    ),
+  )
+  |> glint.add(
+    at: ["export", "package-interface"],
+    do: gleam_passthrough_cmd(
+      "Export package interface as JSON",
+      "gleam export package-interface",
+    ),
+  )
   |> glint.run(args)
 
   Ok(Nil)
@@ -126,15 +169,19 @@ fn root_cmd() -> glint.Command(Nil) {
     io.println("kir — unified package manager for Gleam")
     io.println("")
     io.println("Commands:")
-    io.println("  init      Migrate gleam.toml + package.json → kir.toml")
-    io.println("  install   Resolve and install dependencies")
-    io.println("  add       Add a dependency")
-    io.println("  remove    Remove a dependency")
-    io.println(
-      "  update    Update all dependencies to latest compatible versions",
-    )
-    io.println("  tree      Print dependency tree")
-    io.println("  export    Export kir.toml → gleam.toml + package.json")
+    io.println("  init        Migrate gleam.toml + package.json → kir.toml")
+    io.println("  install     Resolve and install dependencies")
+    io.println("  update      Update all to latest compatible versions")
+    io.println("  add         Add a dependency")
+    io.println("  remove      Remove a dependency")
+    io.println("  deps list   List all dependencies")
+    io.println("  deps download  Download dependencies without installing")
+    io.println("  tree        Print dependency tree")
+    io.println("  clean       Remove build artifacts and store cache")
+    io.println("  publish     Publish package to Hex")
+    io.println("  hex retire  Retire a Hex release")
+    io.println("  hex unretire  Un-retire a Hex release")
+    io.println("  export      Export kir.toml → gleam.toml + package.json")
   })
 }
 
@@ -228,6 +275,93 @@ fn update_cmd() -> glint.Command(Nil) {
       Error(e) -> print_error(e)
     }
   })
+}
+
+fn deps_list_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("List all dependencies")
+  glint.command(fn(_named, _args, _flags) {
+    case do_deps_list(".") {
+      Ok(_) -> Nil
+      Error(e) -> print_error(e)
+    }
+  })
+}
+
+fn deps_download_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Download dependencies without installing")
+  glint.command(fn(_named, _args, _flags) {
+    case do_deps_download(".") {
+      Ok(_) -> Nil
+      Error(e) -> print_error(e)
+    }
+  })
+}
+
+fn clean_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Remove build artifacts and store cache")
+  glint.command(fn(_named, _args, _flags) { do_clean(".") })
+}
+
+fn publish_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Publish package to Hex")
+  use replace_flag <- glint.flag(
+    glint.bool_flag("replace")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Replace existing version on Hex"),
+  )
+  use yes_flag <- glint.flag(
+    glint.bool_flag("yes")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Skip confirmation prompt"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let replace = replace_flag(flags) |> result.unwrap(False)
+    let yes = yes_flag(flags) |> result.unwrap(False)
+    do_publish(".", replace, yes)
+  })
+}
+
+fn hex_retire_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Retire a Hex release")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [package, version, reason, ..rest] -> {
+        let message = case rest {
+          [msg, ..] -> " " <> msg
+          [] -> ""
+        }
+        run_gleam_cmd(
+          "gleam hex retire "
+          <> package
+          <> " "
+          <> version
+          <> " "
+          <> reason
+          <> message,
+        )
+      }
+      _ ->
+        io.println(
+          "Usage: kir hex retire <package> <version> <reason> [message]",
+        )
+    }
+  })
+}
+
+fn hex_unretire_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Un-retire a Hex release")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [package, version] ->
+        run_gleam_cmd("gleam hex unretire " <> package <> " " <> version)
+      _ -> io.println("Usage: kir hex unretire <package> <version>")
+    }
+  })
+}
+
+fn gleam_passthrough_cmd(help: String, cmd: String) -> glint.Command(Nil) {
+  use <- glint.command_help(help)
+  glint.command(fn(_named, _args, _flags) { run_gleam_cmd(cmd) })
 }
 
 fn tree_cmd() -> glint.Command(Nil) {
@@ -483,6 +617,108 @@ fn do_export(dir: String) -> Result(Nil, KirError) {
   )
   list.each(paths, fn(p) { io.println("Wrote " <> p) })
   Ok(Nil)
+}
+
+fn do_deps_list(dir: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_kir_toml(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let all_deps =
+    list.flatten([
+      cfg.hex_deps,
+      cfg.hex_dev_deps,
+      cfg.npm_deps,
+      cfg.npm_dev_deps,
+    ])
+    |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+  case all_deps {
+    [] -> io.println("(no dependencies)")
+    _ ->
+      list.each(all_deps, fn(d) {
+        io.println(
+          d.name
+          <> " "
+          <> ansi.dim(d.version_constraint)
+          <> " ("
+          <> types.registry_to_string(d.registry)
+          <> case d.dev {
+            True -> ", dev"
+            False -> ""
+          }
+          <> ")",
+        )
+      })
+  }
+  Ok(Nil)
+}
+
+fn do_deps_download(dir: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_kir_toml(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let existing_lock =
+    lockfile.read(dir)
+    |> result.map_error(fn(_) { Nil })
+  io.println("Resolving dependencies...")
+  use resolve_result <- result.try(
+    resolver.resolve_full(cfg, existing_lock)
+    |> result.map_error(ResolveErr),
+  )
+  io.println("Downloading...")
+  use installed <- result.try(
+    pipeline.run(resolve_result, dir)
+    |> result.map_error(PipelineErr),
+  )
+  let lock = lockfile.from_packages(installed)
+  use _ <- result.try(
+    lockfile.write(lock, dir)
+    |> result.map_error(LockErr),
+  )
+  io.println(
+    ansi.green("Downloaded")
+    <> " "
+    <> int.to_string(list.length(installed))
+    <> " packages",
+  )
+  Ok(Nil)
+}
+
+fn do_clean(dir: String) -> Nil {
+  let _ = simplifile.delete(dir <> "/build")
+  let _ = simplifile.delete(dir <> "/node_modules")
+  io.println(ansi.green("Cleaned") <> " build artifacts")
+}
+
+fn do_publish(dir: String, replace: Bool, yes: Bool) -> Nil {
+  // kir export로 gleam.toml 생성 후 gleam publish 위임
+  case do_export(dir) {
+    Ok(_) -> Nil
+    Error(e) -> {
+      print_error(e)
+    }
+  }
+  let cmd =
+    "gleam publish"
+    <> case replace {
+      True -> " --replace"
+      False -> ""
+    }
+    <> case yes {
+      True -> " --yes"
+      False -> ""
+    }
+  run_gleam_cmd(cmd)
+}
+
+fn run_gleam_cmd(cmd: String) -> Nil {
+  case platform.run_command(cmd) {
+    Ok(output) -> io.print(output)
+    Error(#(_code, output)) -> {
+      io.print(output)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
