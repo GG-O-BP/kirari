@@ -246,18 +246,18 @@ src/kirari_ffi.erl        Erlang FFI (tar, hardlink, rename)
 ## Development
 
 ```sh
-gleam build    # Build the project
-gleam test     # Run the tests
-gleam check    # Type check
-gleam format   # Format source code
-gleam run      # Run kirari
+kir build      # Build the project
+kir test       # Run the tests
+kir check      # Type check
+kir format     # Format source code
+kir install    # Install dependencies
 ```
 
 ### Deployment
 
 ```sh
-gleam export erlang-shipment
-# Run with: build/erlang-shipment/entrypoint.sh
+kir export erlang-shipment
+# Run with: build/erlang-shipment/kir --version
 ```
 
 ## License

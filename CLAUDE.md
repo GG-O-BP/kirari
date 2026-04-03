@@ -9,13 +9,13 @@ kir.toml은 존재하지 않는다.
 
 ## 빌드
 
-- 빌드: `gleam build`
-- 테스트: `gleam test`
-- 타입 체크: `gleam check`
-- 포맷: `gleam format`
-- 실행: `gleam run` 또는 `./kir`
+- 빌드: `kir build`
+- 테스트: `kir test`
+- 타입 체크: `kir check`
+- 포맷: `kir format`
+- 의존성 설치: `kir install`
 
-코드 변경 후 `gleam check && gleam test` 반드시 실행.
+코드 변경 후 `kir check && kir test` 반드시 실행.
 
 ## 설계 원칙
 
