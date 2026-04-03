@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gleam *)",
+      "Bash(git *)",
+      "Bash(mkdir *)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Edit(/kir.lock)",
+      "Edit(/manifest.toml)",
+      "Edit(/build/**)",
+      "Edit(/.git/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(**.gleam)",
+            "command": "gleam format 2>/dev/null || true",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Write(**.gleam)",
+            "command": "gleam format 2>/dev/null || true",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/verify-before-stop.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

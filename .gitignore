@@ -1,0 +1,12 @@
+# Gleam build artifacts
+*.beam
+*.ez
+/build
+erl_crash.dump
+
+# kir artifacts
+/.kir/store
+kir.lock
+
+# Claude Code local settings (shared settings are tracked)
+.claude/settings.local.json
