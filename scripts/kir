@@ -1,3 +1,7 @@
 #!/bin/sh
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$0"
+if [ -L "$SELF" ]; then
+  SELF="$(readlink -f "$SELF")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 exec erl -pa "$SCRIPT_DIR"/*/ebin -eval "kirari@@main:run(kirari)" -noshell -extra "$@"

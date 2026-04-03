@@ -21,7 +21,7 @@ Requires [Erlang/OTP](https://www.erlang.org/) 28 or later.
 ### Linux/macOS
 
 ```sh
-curl -fsSL https://github.com/GG-O-BP/kirari/releases/latest/download/kirari-linux-x86_64.tar.gz | tar -xz -C /usr/local/lib
+curl -fsSL https://github.com/GG-O-BP/kirari/releases/latest/download/kirari-linux-x86_64.tar.gz | sudo tar -xz -C /usr/local/lib
 sudo ln -sf /usr/local/lib/erlang-shipment/kir /usr/local/bin/kir
 kir --version
 ```
