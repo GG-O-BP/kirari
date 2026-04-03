@@ -7,7 +7,8 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/types.{
-  type Dependency, type KirConfig, Dependency, Hex, KirConfig, Npm, PackageInfo,
+  type Dependency, type KirConfig, type PathDep, Dependency, Hex, KirConfig, Npm,
+  PackageInfo, PathDep,
 }
 import simplifile
 import tom.{type Toml}
@@ -55,6 +56,13 @@ fn decode_gleam_toml(doc: Dict(String, Toml)) -> Result(KirConfig, MigrateError)
     [] -> decode_gleam_deps(doc, "dev_dependencies", False)
     _ -> hex_dev_deps
   }
+  let path_deps = decode_gleam_path_deps(doc, "dependencies", False)
+  let path_dev_deps = case
+    decode_gleam_path_deps(doc, "dev-dependencies", True)
+  {
+    [] -> decode_gleam_path_deps(doc, "dev_dependencies", True)
+    deps -> deps
+  }
 
   let package =
     PackageInfo(
@@ -73,6 +81,8 @@ fn decode_gleam_toml(doc: Dict(String, Toml)) -> Result(KirConfig, MigrateError)
     npm_deps: [],
     npm_dev_deps: [],
     security: types.default_security_config(),
+    path_deps: path_deps,
+    path_dev_deps: path_dev_deps,
   ))
 }
 
@@ -109,6 +119,30 @@ fn decode_gleam_deps(
               registry: Hex,
               dev: dev,
             ))
+          _ -> Error(Nil)
+        }
+      })
+      |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+    Error(_) -> []
+  }
+}
+
+fn decode_gleam_path_deps(
+  doc: Dict(String, Toml),
+  section: String,
+  dev: Bool,
+) -> List(PathDep) {
+  case tom.get_table(doc, [section]) {
+    Ok(table) ->
+      dict.to_list(table)
+      |> list.filter_map(fn(entry) {
+        let #(name, value) = entry
+        case value {
+          tom.InlineTable(t) ->
+            case dict.get(t, "path") {
+              Ok(tom.String(p)) -> Ok(PathDep(name: name, path: p, dev: dev))
+              _ -> Error(Nil)
+            }
           _ -> Error(Nil)
         }
       })

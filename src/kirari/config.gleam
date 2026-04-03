@@ -7,8 +7,8 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/types.{
-  type Dependency, type KirConfig, type PackageInfo, type Registry,
-  type SecurityConfig, Dependency, Hex, KirConfig, Npm, PackageInfo,
+  type Dependency, type KirConfig, type PackageInfo, type PathDep, type Registry,
+  type SecurityConfig, Dependency, Hex, KirConfig, Npm, PackageInfo, PathDep,
   SecurityConfig,
 }
 import simplifile
@@ -55,6 +55,14 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     [] -> decode_deps_from_table(doc, ["dev_dependencies"], Hex, True)
     deps -> deps
   }
+  // 로컬 경로 의존성
+  let path_deps = decode_path_deps_from_table(doc, ["dependencies"], False)
+  let path_dev_deps = case
+    decode_path_deps_from_table(doc, ["dev-dependencies"], True)
+  {
+    [] -> decode_path_deps_from_table(doc, ["dev_dependencies"], True)
+    deps -> deps
+  }
   // npm 의존성: [npm-dependencies], [dev-npm-dependencies]
   let npm_deps = decode_deps_from_table(doc, ["npm-dependencies"], Npm, False)
   let npm_dev_deps =
@@ -67,6 +75,8 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     npm_deps: npm_deps,
     npm_dev_deps: npm_dev_deps,
     security: security,
+    path_deps: path_deps,
+    path_dev_deps: path_dev_deps,
   ))
 }
 
@@ -153,6 +163,30 @@ fn decode_deps_from_table(
   }
 }
 
+fn decode_path_deps_from_table(
+  doc: Dict(String, Toml),
+  path: List(String),
+  dev: Bool,
+) -> List(PathDep) {
+  case tom.get_table(doc, path) {
+    Ok(table) ->
+      dict.to_list(table)
+      |> list.filter_map(fn(entry) {
+        let #(name, value) = entry
+        case value {
+          tom.InlineTable(t) ->
+            case dict.get(t, "path") {
+              Ok(tom.String(p)) -> Ok(PathDep(name: name, path: p, dev: dev))
+              _ -> Error(Nil)
+            }
+          _ -> Error(Nil)
+        }
+      })
+      |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+    Error(_) -> []
+  }
+}
+
 fn decode_security_section(doc: Dict(String, Toml)) -> SecurityConfig {
   let exclude_newer =
     tom.get_string(doc, ["security", "exclude-newer"])
@@ -180,10 +214,14 @@ pub fn encode_config(config: KirConfig) -> String {
   [
     encode_top_level(config.package),
     encode_repository(config.package),
-    encode_dep_section("dependencies", config.hex_deps),
-    encode_dep_section("dev-dependencies", config.hex_dev_deps),
-    encode_dep_section("npm-dependencies", config.npm_deps),
-    encode_dep_section("dev-npm-dependencies", config.npm_dev_deps),
+    encode_dep_section("dependencies", config.hex_deps, config.path_deps),
+    encode_dep_section(
+      "dev-dependencies",
+      config.hex_dev_deps,
+      config.path_dev_deps,
+    ),
+    encode_dep_section("npm-dependencies", config.npm_deps, []),
+    encode_dep_section("dev-npm-dependencies", config.npm_dev_deps, []),
     encode_security_section(config.security),
   ]
   |> list.filter(fn(s) { s != "" })
@@ -233,16 +271,35 @@ fn encode_repository(pkg: PackageInfo) -> String {
   }
 }
 
-fn encode_dep_section(header: String, deps: List(Dependency)) -> String {
-  case deps {
-    [] -> ""
-    _ -> {
-      let sorted = list.sort(deps, fn(a, b) { string.compare(a.name, b.name) })
-      let lines =
-        list.map(sorted, fn(dep) {
-          quote_key(dep.name) <> " = " <> quote(dep.version_constraint)
+fn encode_dep_section(
+  header: String,
+  deps: List(Dependency),
+  path_deps: List(PathDep),
+) -> String {
+  case deps, path_deps {
+    [], [] -> ""
+    _, _ -> {
+      let reg_lines =
+        list.sort(deps, fn(a, b) { string.compare(a.name, b.name) })
+        |> list.map(fn(dep) {
+          #(
+            dep.name,
+            quote_key(dep.name) <> " = " <> quote(dep.version_constraint),
+          )
         })
-      "[" <> header <> "]\n" <> string.join(lines, "\n") <> "\n"
+      let path_lines =
+        list.sort(path_deps, fn(a, b) { string.compare(a.name, b.name) })
+        |> list.map(fn(dep) {
+          #(
+            dep.name,
+            quote_key(dep.name) <> " = { path = " <> quote(dep.path) <> " }",
+          )
+        })
+      let all_lines =
+        list.append(reg_lines, path_lines)
+        |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+        |> list.map(fn(pair) { pair.1 })
+      "[" <> header <> "]\n" <> string.join(all_lines, "\n") <> "\n"
     }
   }
 }

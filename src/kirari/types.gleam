@@ -31,10 +31,10 @@ pub fn registry_from_string(s: String) -> Result(Registry, Nil) {
 }
 
 // ---------------------------------------------------------------------------
-// Dependency (kir.toml에 선언된 의존성)
+// Dependency (gleam.toml에 선언된 의존성)
 // ---------------------------------------------------------------------------
 
-/// kir.toml에 선언된 하나의 의존성
+/// gleam.toml에 선언된 하나의 레지스트리 의존성
 pub type Dependency {
   Dependency(
     name: String,
@@ -42,6 +42,11 @@ pub type Dependency {
     registry: Registry,
     dev: Bool,
   )
+}
+
+/// gleam.toml에 선언된 로컬 경로 의존성 (gleam이 직접 관리)
+pub type PathDep {
+  PathDep(name: String, path: String, dev: Bool)
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +109,7 @@ pub type PackageInfo {
 // KirConfig (kir.toml 전체)
 // ---------------------------------------------------------------------------
 
-/// kir.toml의 인메모리 표현
+/// gleam.toml의 인메모리 표현
 pub type KirConfig {
   KirConfig(
     package: PackageInfo,
@@ -113,6 +118,8 @@ pub type KirConfig {
     npm_deps: List(Dependency),
     npm_dev_deps: List(Dependency),
     security: SecurityConfig,
+    path_deps: List(PathDep),
+    path_dev_deps: List(PathDep),
   )
 }
 
