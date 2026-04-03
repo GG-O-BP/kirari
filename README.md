@@ -16,6 +16,40 @@ Written in Gleam, targeting Erlang (BEAM).
 
 ## Installation
 
+Requires [Erlang/OTP](https://www.erlang.org/) 28 or later.
+
+### Linux/macOS
+
+```sh
+curl -fsSL https://github.com/GG-O-BP/kirari/releases/latest/download/kirari-linux-x86_64.tar.gz | tar -xz -C /usr/local/lib
+sudo ln -sf /usr/local/lib/erlang-shipment/kir /usr/local/bin/kir
+kir --version
+```
+
+### Windows
+
+```powershell
+# Download kirari-windows-x86_64.zip from GitHub Releases
+Expand-Archive kirari-windows-x86_64.zip -DestinationPath C:\kirari
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\kirari\erlang-shipment", "User")
+# Restart terminal, then:
+kir --version
+```
+
+### Quick Start
+
+```sh
+cd my-gleam-project
+kir init                     # Add kirari sections to gleam.toml
+kir add gleam_json           # Add a Hex package
+kir add highlight.js --npm   # Add an npm package
+kir install                  # Resolve and install all dependencies
+kir build                    # Build the project
+kir test                     # Run tests
+```
+
+### Build from Source
+
 Requires [Gleam](https://gleam.run) and Erlang/OTP.
 
 ```sh
