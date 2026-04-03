@@ -11,3 +11,6 @@ kir.lock
 
 # Claude Code local settings (shared settings are tracked)
 .claude/settings.local.json
+
+manifest.toml
+gleam.toml

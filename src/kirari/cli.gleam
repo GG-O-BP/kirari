@@ -747,13 +747,16 @@ fn warn_undeclared_npm(dir: String, cfg: KirConfig) -> Nil {
   case ffi_detect.detect_npm_imports(dir) {
     Ok(detections) -> {
       let undeclared = ffi_detect.find_undeclared(detections, cfg)
-      case undeclared {
+      let names =
+        list.map(undeclared, fn(d) { d.package_name })
+        |> list.unique
+      case names {
         [] -> Nil
         _ -> {
           io.println(
             ansi.yellow("Warning:") <> " undeclared npm imports detected:",
           )
-          list.each(undeclared, fn(d) { io.println("  " <> d.package_name) })
+          list.each(names, fn(n) { io.println("  " <> n) })
         }
       }
     }

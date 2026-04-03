@@ -107,12 +107,13 @@ fn extract_from_specifier(line: String) -> Result(String, Nil) {
   }
 }
 
-/// bare import: 상대 경로(./,../)나 URL이 아닌 것
+/// bare import: 상대 경로, URL, Node.js 내장 모듈이 아닌 것
 fn is_bare_import(specifier: String) -> Bool {
   !string.starts_with(specifier, ".")
   && !string.starts_with(specifier, "/")
   && !string.starts_with(specifier, "http://")
   && !string.starts_with(specifier, "https://")
+  && !string.starts_with(specifier, "node:")
 }
 
 /// specifier를 패키지명으로 변환
