@@ -36,21 +36,12 @@ jobs:
       - name: Add kir wrapper (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cat > build/erlang-shipment/kir << 'SCRIPT'
-          #!/bin/sh
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-          exec erl -pa "$SCRIPT_DIR"/*/ebin -eval "kirari@@main:run(kirari)" -noshell -extra "$@"
-          SCRIPT
+          cp scripts/kir build/erlang-shipment/kir
           chmod +x build/erlang-shipment/kir
 
       - name: Add kir wrapper (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          cat > build/erlang-shipment/kir.bat << 'SCRIPT'
-          @echo off
-          erl -pa "%~dp0\*\ebin" -eval "kirari@@main:run(kirari)" -noshell -extra %*
-          SCRIPT
+        run: copy scripts\kir.bat build\erlang-shipment\kir.bat
 
       - name: Archive (Linux)
         if: matrix.os == 'ubuntu-latest'

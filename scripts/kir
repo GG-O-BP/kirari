@@ -1,0 +1,3 @@
+#!/bin/sh
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec erl -pa "$SCRIPT_DIR"/*/ebin -eval "kirari@@main:run(kirari)" -noshell -extra "$@"
