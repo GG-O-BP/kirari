@@ -3,6 +3,7 @@
 *.ez
 /build
 erl_crash.dump
+mem
 
 # kir artifacts
 /.kir/store

@@ -1,7 +1,8 @@
-# Kirari (kir) — Gleam 통합 패키지 매니저
+# Kirari — Gleam 통합 패키지 매니저
 
 gleam.toml + package.json을 kir.toml 하나로 대체.
 Hex와 npm 의존성을 단일 워크플로우로 관리. Gleam으로 작성.
+CLI 명령어는 `kir`. 프로그램 자체를 지칭할 때는 kirari.
 
 ## 빌드
 
