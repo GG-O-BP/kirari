@@ -56,17 +56,13 @@ pub fn export(
   }
 }
 
-/// kir install/update/add/remove 후: manifest.toml + packages.toml만 생성
+/// kir install/update/add/remove 후: packages.toml만 생성
+/// manifest.toml은 gleam이 직접 생성 (requirements 필드를 정확히 채우기 위해)
 pub fn write_build_metadata(
-  config: KirConfig,
+  _config: KirConfig,
   lock: KirLock,
   directory: String,
 ) -> Result(Nil, ExportError) {
-  let manifest_path = directory <> "/manifest.toml"
-  use _ <- result.try(
-    simplifile.write(manifest_path, to_manifest_toml(config, lock))
-    |> result.map_error(fn(_) { WriteError(manifest_path, "failed to write") }),
-  )
   let pkgs_path = directory <> "/build/packages/packages.toml"
   let _ = simplifile.create_directory_all(directory <> "/build/packages")
   let _ = simplifile.write(pkgs_path, to_packages_toml(lock))

@@ -39,6 +39,20 @@ pub type KirError {
 
 /// CLI 실행
 pub fn run(args: List(String)) -> Result(Nil, KirError) {
+  case args {
+    ["--help"] | ["-h"] | ["help"] -> {
+      print_help()
+      Ok(Nil)
+    }
+    ["--version"] | ["-v"] -> {
+      io.println("kirari 1.0.0")
+      Ok(Nil)
+    }
+    _ -> run_glint(args)
+  }
+}
+
+fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   glint.new()
   |> glint.with_name("kir")
   |> glint.pretty_help(glint.default_pretty_help())
@@ -205,24 +219,45 @@ fn format_error(error: KirError) -> String {
 // ---------------------------------------------------------------------------
 
 fn root_cmd() -> glint.Command(Nil) {
-  glint.command(fn(_named, _args, _flags) {
-    io.println("kir — unified package manager for Gleam")
-    io.println("")
-    io.println("Commands:")
-    io.println("  init        Add kirari sections to gleam.toml")
-    io.println("  install     Resolve and install dependencies")
-    io.println("  update      Update all to latest compatible versions")
-    io.println("  add         Add a dependency")
-    io.println("  remove      Remove a dependency")
-    io.println("  deps list   List all dependencies")
-    io.println("  deps download  Download dependencies without installing")
-    io.println("  tree        Print dependency tree")
-    io.println("  clean       Remove build artifacts and store cache")
-    io.println("  publish     Publish package to Hex")
-    io.println("  hex retire  Retire a Hex release")
-    io.println("  hex unretire  Un-retire a Hex release")
-    io.println("  export      Export manifest.toml + package.json")
-  })
+  glint.command(fn(_named, _args, _flags) { print_help() })
+}
+
+fn print_help() -> Nil {
+  io.println("kir — unified package manager for Gleam")
+  io.println("kirari 1.0.0")
+  io.println("")
+  io.println("Usage: kir <command> [flags]")
+  io.println("")
+  io.println("Commands:")
+  io.println("  build       Build the project")
+  io.println("  run         Run the project")
+  io.println("  test        Run the tests")
+  io.println("  check       Type check the project")
+  io.println("  dev         Run the dev entrypoint")
+  io.println("  init        Add kirari sections to gleam.toml")
+  io.println("  install     Resolve and install dependencies")
+  io.println("  update      Update all to latest compatible versions")
+  io.println("  add         Add a dependency")
+  io.println("  remove      Remove a dependency")
+  io.println("  deps list   List all dependencies")
+  io.println("  deps download  Download dependencies without installing")
+  io.println("  tree        Print dependency tree")
+  io.println("  clean       Remove build artifacts and store cache")
+  io.println("  publish     Publish package to Hex")
+  io.println("  hex retire  Retire a Hex release")
+  io.println("  hex unretire  Un-retire a Hex release")
+  io.println("  export      Export manifest.toml + package.json")
+  io.println("  format      Format source code")
+  io.println("  fix         Rewrite deprecated code")
+  io.println("  new         Create a new Gleam project")
+  io.println("  shell       Start an Erlang shell")
+  io.println("  lsp         Run the language server")
+  io.println("  docs        Build, publish, or remove documentation")
+  io.println("  help        Print this help message")
+  io.println("")
+  io.println("Flags:")
+  io.println("  --help, -h     Print help")
+  io.println("  --version, -v  Print version")
 }
 
 fn init_cmd() -> glint.Command(Nil) {
