@@ -396,6 +396,7 @@ fn dev_cmd() -> glint.Command(Nil) {
 fn install_then_gleam_cmd(help: String, cmd: String) -> glint.Command(Nil) {
   use <- glint.command_help(help)
   glint.command(fn(_named, _args, _flags) {
+    let _ = config.normalize_gleam_toml(".")
     let _ = do_install_quiet(".")
     run_gleam_cmd(cmd)
   })
@@ -465,7 +466,10 @@ fn hex_unretire_cmd() -> glint.Command(Nil) {
 
 fn gleam_passthrough_cmd(help: String, cmd: String) -> glint.Command(Nil) {
   use <- glint.command_help(help)
-  glint.command(fn(_named, _args, _flags) { run_gleam_cmd(cmd) })
+  glint.command(fn(_named, _args, _flags) {
+    let _ = config.normalize_gleam_toml(".")
+    run_gleam_cmd(cmd)
+  })
 }
 
 fn tree_cmd() -> glint.Command(Nil) {

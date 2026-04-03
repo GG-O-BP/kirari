@@ -179,6 +179,7 @@ pub fn write_config(
 pub fn encode_config(config: KirConfig) -> String {
   [
     encode_top_level(config.package),
+    encode_repository(config.package),
     encode_dep_section("dependencies", config.hex_deps),
     encode_dep_section("dev-dependencies", config.hex_dev_deps),
     encode_dep_section("npm-dependencies", config.npm_deps),
@@ -207,11 +208,29 @@ fn encode_top_level(pkg: PackageInfo) -> String {
     "erlang" -> lines
     t -> list.append(lines, ["target = " <> quote(t)])
   }
-  let lines = case pkg.repository {
-    Ok(url) -> list.append(lines, ["repository = " <> quote(url)])
-    Error(_) -> lines
-  }
   string.join(lines, "\n") <> "\n"
+}
+
+fn encode_repository(pkg: PackageInfo) -> String {
+  case pkg.repository {
+    Error(_) -> ""
+    Ok(repo) ->
+      case string.split_once(repo, ":") {
+        Ok(#(repo_type, path)) ->
+          case string.split_once(path, "/") {
+            Ok(#(user, repo_name)) ->
+              "[repository]\ntype = "
+              <> quote(repo_type)
+              <> "\nuser = "
+              <> quote(user)
+              <> "\nrepo = "
+              <> quote(repo_name)
+              <> "\n"
+            Error(_) -> ""
+          }
+        Error(_) -> ""
+      }
+  }
 }
 
 fn encode_dep_section(header: String, deps: List(Dependency)) -> String {
@@ -273,6 +292,63 @@ fn escape_toml_string(s: String) -> String {
   |> string.replace("\"", "\\\"")
   |> string.replace("\n", "\\n")
   |> string.replace("\t", "\\t")
+}
+
+// ---------------------------------------------------------------------------
+// gleam.toml 정규화 — 문자열 repository를 gleam 호환 테이블로 변환
+// ---------------------------------------------------------------------------
+
+/// gleam.toml의 repository 문자열을 gleam 호환 테이블 형식으로 정규화
+pub fn normalize_gleam_toml(directory: String) -> Result(Nil, Nil) {
+  let path = directory <> "/gleam.toml"
+  use content <- result.try(
+    simplifile.read(path) |> result.map_error(fn(_) { Nil }),
+  )
+  use doc <- result.try(tom.parse(content) |> result.map_error(fn(_) { Nil }))
+  case tom.get_string(doc, ["repository"]) {
+    Ok(repo_str) ->
+      case repo_string_to_table(repo_str) {
+        Ok(table_str) -> {
+          let new_content =
+            string.split(content, "\n")
+            |> list.map(fn(line) {
+              case is_repository_assignment(string.trim(line)) {
+                True -> table_str
+                False -> line
+              }
+            })
+            |> string.join("\n")
+          simplifile.write(path, new_content)
+          |> result.map_error(fn(_) { Nil })
+        }
+        Error(_) -> Ok(Nil)
+      }
+    Error(_) -> Ok(Nil)
+  }
+}
+
+fn repo_string_to_table(repo: String) -> Result(String, Nil) {
+  use #(repo_type, path) <- result.try(string.split_once(repo, ":"))
+  use #(user, repo_name) <- result.try(string.split_once(path, "/"))
+  Ok(
+    "[repository]\ntype = "
+    <> quote(repo_type)
+    <> "\nuser = "
+    <> quote(user)
+    <> "\nrepo = "
+    <> quote(repo_name),
+  )
+}
+
+fn is_repository_assignment(line: String) -> Bool {
+  case string.starts_with(line, "repository") {
+    True ->
+      case string.starts_with(line, "[") {
+        True -> False
+        False -> string.contains(line, "=")
+      }
+    False -> False
+  }
 }
 
 // ---------------------------------------------------------------------------
