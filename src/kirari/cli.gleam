@@ -11,6 +11,7 @@ import kirari/config
 import kirari/export
 import kirari/ffi as ffi_detect
 import kirari/lockfile
+import kirari/migrate
 import kirari/resolver
 import kirari/tree
 import kirari/types.{
@@ -20,6 +21,7 @@ import kirari/types.{
 /// 최상위 에러 타입 — 모든 모듈 에러를 래핑
 pub type KirError {
   ConfigErr(config.ConfigError)
+  MigrateErr(migrate.MigrateError)
   LockErr(lockfile.LockfileError)
   ResolveErr(resolver.ResolverError)
   ExportErr(export.ExportError)
@@ -60,6 +62,12 @@ fn format_error(error: KirError) -> String {
         config.ParseError(d) -> "parse error: " <> d
         config.InvalidField(f, d) -> "invalid field " <> f <> ": " <> d
         config.WriteError(p, d) -> "write error " <> p <> ": " <> d
+      }
+    MigrateErr(e) ->
+      case e {
+        migrate.FileNotFound(p) -> "file not found: " <> p
+        migrate.ParseError(d) -> "parse error: " <> d
+        migrate.InvalidField(f, d) -> "invalid field " <> f <> ": " <> d
       }
     LockErr(e) ->
       case e {
@@ -190,11 +198,11 @@ fn export_cmd() -> glint.Command(Nil) {
 fn do_init(dir: String) -> Result(Nil, KirError) {
   io.println("Migrating to kir.toml...")
   use gleam_config <- result.try(
-    config.read_gleam_toml(dir)
-    |> result.map_error(ConfigErr),
+    migrate.read_gleam_toml(dir)
+    |> result.map_error(MigrateErr),
   )
   // package.json이 있으면 npm 의존성도 병합
-  let npm_deps = case config.read_package_json(dir) {
+  let npm_deps = case migrate.read_package_json(dir) {
     Ok(deps) -> deps
     Error(_) -> []
   }
