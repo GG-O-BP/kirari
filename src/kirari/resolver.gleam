@@ -26,7 +26,16 @@ pub type VersionInfo {
   VersionInfo(
     version: String,
     published_at: String,
+    tarball_url: String,
     dependencies: List(Dependency),
+  )
+}
+
+/// 해결 결과 — 패키지 목록 + 버전 정보 캐시 (파이프라인에서 tarball_url 조회용)
+pub type ResolveResult {
+  ResolveResult(
+    packages: List(ResolvedPackage),
+    version_infos: Dict(String, VersionInfo),
   )
 }
 
@@ -52,6 +61,24 @@ pub fn resolve_with(
   existing_lock: Result(KirLock, Nil),
   fetch: FetchVersions,
 ) -> Result(List(ResolvedPackage), ResolverError) {
+  use result <- result.try(resolve_full_with(config, existing_lock, fetch))
+  Ok(result.packages)
+}
+
+/// 실제 레지스트리 — 패키지 + 버전 정보 함께 반환
+pub fn resolve_full(
+  config: KirConfig,
+  existing_lock: Result(KirLock, Nil),
+) -> Result(ResolveResult, ResolverError) {
+  resolve_full_with(config, existing_lock, fetch_from_registries)
+}
+
+/// DI 기반 — 패키지 + 버전 정보 함께 반환
+pub fn resolve_full_with(
+  config: KirConfig,
+  existing_lock: Result(KirLock, Nil),
+  fetch: FetchVersions,
+) -> Result(ResolveResult, ResolverError) {
   let direct_deps =
     list.flatten([
       config.hex_deps,
@@ -63,7 +90,15 @@ pub fn resolve_with(
     Ok(ts) -> Ok(ts)
     Error(_) -> Error(Nil)
   }
-  do_resolve(direct_deps, dict.new(), existing_lock, exclude_newer, fetch, [])
+  do_resolve(
+    direct_deps,
+    dict.new(),
+    dict.new(),
+    existing_lock,
+    exclude_newer,
+    fetch,
+    [],
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -73,17 +108,19 @@ pub fn resolve_with(
 fn do_resolve(
   queue: List(Dependency),
   resolved: Dict(String, ResolvedPackage),
+  version_cache: Dict(String, VersionInfo),
   existing_lock: Result(KirLock, Nil),
   exclude_newer: Result(String, Nil),
   fetch: FetchVersions,
   visited: List(String),
-) -> Result(List(ResolvedPackage), ResolverError) {
+) -> Result(ResolveResult, ResolverError) {
   case queue {
     [] ->
-      Ok(
-        dict.values(resolved)
-        |> list.sort(types.compare_packages),
-      )
+      Ok(ResolveResult(
+        packages: dict.values(resolved)
+          |> list.sort(types.compare_packages),
+        version_infos: version_cache,
+      ))
     [dep, ..rest] -> {
       let key = dep.name <> ":" <> types.registry_to_string(dep.registry)
       case dict.has_key(resolved, key) {
@@ -91,6 +128,7 @@ fn do_resolve(
           do_resolve(
             rest,
             resolved,
+            version_cache,
             existing_lock,
             exclude_newer,
             fetch,
@@ -100,18 +138,19 @@ fn do_resolve(
           case list.contains(visited, key) {
             True -> Error(CyclicDependency([key, ..visited]))
             False -> {
-              use pkg <- result.try(resolve_one(
+              use #(pkg, vi) <- result.try(resolve_one(
                 dep,
                 existing_lock,
                 exclude_newer,
                 fetch,
               ))
               let new_resolved = dict.insert(resolved, key, pkg)
-              // 전이 의존성은 SHA256를 아직 모르므로 빈 문자열로 큐에 추가
-              // (resolve_one에서 각각 해결됨)
+              let new_cache = dict.insert(version_cache, key, vi)
+              let transitive = vi.dependencies
               do_resolve(
-                list.append(rest, pkg_transitive_deps(pkg, dep.registry)),
+                list.append(rest, transitive),
                 new_resolved,
+                new_cache,
                 existing_lock,
                 exclude_newer,
                 fetch,
@@ -130,15 +169,28 @@ fn resolve_one(
   existing_lock: Result(KirLock, Nil),
   exclude_newer: Result(String, Nil),
   fetch: FetchVersions,
-) -> Result(ResolvedPackage, ResolverError) {
+) -> Result(#(ResolvedPackage, VersionInfo), ResolverError) {
+  // 레지스트리에서 가져오기
+  use versions <- result.try(fetch(dep.name, dep.registry))
+  // exclude-newer 필터
+  let versions = filter_by_cutoff(versions, exclude_newer)
   // 기존 lock에서 찾기
   case try_from_lock(dep, existing_lock) {
-    Ok(pkg) -> Ok(pkg)
+    Ok(pkg) -> {
+      // lock hit — 해당 버전의 VersionInfo를 찾아 전이 의존성 반환
+      let vi =
+        list.find(versions, fn(v) { v.version == pkg.version })
+        |> result.unwrap(
+          VersionInfo(
+            version: pkg.version,
+            published_at: "",
+            tarball_url: "",
+            dependencies: [],
+          ),
+        )
+      Ok(#(pkg, vi))
+    }
     Error(_) -> {
-      // 레지스트리에서 가져오기
-      use versions <- result.try(fetch(dep.name, dep.registry))
-      // exclude-newer 필터
-      let versions = filter_by_cutoff(versions, exclude_newer)
       // 제약 조건 파싱
       use constraint <- result.try(parse_constraint(dep))
       // 만족하는 버전 필터 + 최고 버전 선택
@@ -160,11 +212,14 @@ fn resolve_one(
         })
       case matching {
         [best, ..] ->
-          Ok(ResolvedPackage(
-            name: dep.name,
-            version: best.version,
-            registry: dep.registry,
-            sha256: "",
+          Ok(#(
+            ResolvedPackage(
+              name: dep.name,
+              version: best.version,
+              registry: dep.registry,
+              sha256: "",
+            ),
+            best,
           ))
         [] ->
           Error(
@@ -187,7 +242,6 @@ fn try_from_lock(
       p.name == dep.name && p.registry == dep.registry
     }),
   )
-  // 기존 lock 버전이 현재 제약 조건을 만족하는지 확인
   use constraint <- result.try(
     parse_constraint(dep) |> result.replace_error(Nil),
   )
@@ -235,16 +289,6 @@ fn filter_by_cutoff(
   }
 }
 
-fn pkg_transitive_deps(
-  _pkg: ResolvedPackage,
-  _registry: Registry,
-) -> List(Dependency) {
-  // 전이 의존성은 resolve_one에서 fetch한 VersionInfo.dependencies에서 와야 함
-  // 현재 구현에서는 직접 의존성만 해결 (v1 단순화)
-  // TODO: 전이 의존성 해결 시 VersionInfo를 캐시하여 여기서 참조
-  []
-}
-
 // ---------------------------------------------------------------------------
 // 실제 레지스트리 조회
 // ---------------------------------------------------------------------------
@@ -269,6 +313,11 @@ fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
       VersionInfo(
         version: v.version,
         published_at: v.inserted_at,
+        tarball_url: "https://repo.hex.pm/tarballs/"
+          <> name
+          <> "-"
+          <> v.version
+          <> ".tar",
         dependencies: list.filter_map(v.dependencies, fn(d) {
           case d.optional {
             True -> Error(Nil)
@@ -296,6 +345,7 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
       VersionInfo(
         version: v.version,
         published_at: v.published_at,
+        tarball_url: v.tarball_url,
         dependencies: list.map(v.dependencies, fn(d) {
           types.Dependency(
             name: d.name,

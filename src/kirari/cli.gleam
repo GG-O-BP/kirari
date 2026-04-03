@@ -12,6 +12,7 @@ import kirari/export
 import kirari/ffi as ffi_detect
 import kirari/lockfile
 import kirari/migrate
+import kirari/pipeline
 import kirari/resolver
 import kirari/tree
 import kirari/types.{
@@ -24,6 +25,7 @@ pub type KirError {
   MigrateErr(migrate.MigrateError)
   LockErr(lockfile.LockfileError)
   ResolveErr(resolver.ResolverError)
+  PipelineErr(pipeline.PipelineError)
   ExportErr(export.ExportError)
   FfiErr(ffi_detect.FfiError)
   UserError(detail: String)
@@ -42,6 +44,7 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["init"], do: init_cmd())
   |> glint.add(at: ["install"], do: install_cmd())
   |> glint.add(at: ["add"], do: add_cmd())
+  |> glint.add(at: ["remove"], do: remove_cmd())
   |> glint.add(at: ["tree"], do: tree_cmd())
   |> glint.add(at: ["export"], do: export_cmd())
   |> glint.run(args)
@@ -94,6 +97,13 @@ fn format_error(error: KirError) -> String {
         resolver.CyclicDependency(c) ->
           "cyclic dependency: " <> string.join(c, " → ")
       }
+    PipelineErr(e) ->
+      case e {
+        pipeline.DownloadError(name, ver, d) ->
+          "download failed: " <> name <> "@" <> ver <> " — " <> d
+        pipeline.StoreErr(se) -> "store error: " <> string.inspect(se)
+        pipeline.InstallErr(ie) -> "install error: " <> string.inspect(ie)
+      }
     ExportErr(e) ->
       case e {
         export.WriteError(p, d) -> "export write error " <> p <> ": " <> d
@@ -118,6 +128,7 @@ fn root_cmd() -> glint.Command(Nil) {
     io.println("  init      Migrate gleam.toml + package.json → kir.toml")
     io.println("  install   Resolve and install dependencies")
     io.println("  add       Add a dependency")
+    io.println("  remove    Remove a dependency")
     io.println("  tree      Print dependency tree")
     io.println("  export    Export kir.toml → gleam.toml + package.json")
   })
@@ -137,8 +148,14 @@ fn install_cmd() -> glint.Command(Nil) {
   use <- glint.command_help(
     "Resolve and install dependencies, generate kir.lock",
   )
-  glint.command(fn(_named, _args, _flags) {
-    case do_install(".") {
+  use frozen_flag <- glint.flag(
+    glint.bool_flag("frozen")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Verify lockfile matches without installing"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let frozen = frozen_flag(flags) |> result.unwrap(False)
+    case do_install(".", frozen) {
       Ok(_) -> Nil
       Error(e) -> print_error(e)
     }
@@ -167,6 +184,26 @@ fn add_cmd() -> glint.Command(Nil) {
           Error(e) -> print_error(e)
         }
       _ -> io.println("Usage: kir add <package> [--npm] [--dev]")
+    }
+  })
+}
+
+fn remove_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Remove a dependency")
+  use npm_flag <- glint.flag(
+    glint.bool_flag("npm")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Force npm registry"),
+  )
+  glint.command(fn(_named, args, flags) {
+    let is_npm = npm_flag(flags) |> result.unwrap(False)
+    case args {
+      [name, ..] ->
+        case do_remove(".", name, is_npm) {
+          Ok(_) -> Nil
+          Error(e) -> print_error(e)
+        }
+      _ -> io.println("Usage: kir remove <package> [--npm]")
     }
   })
 }
@@ -215,7 +252,7 @@ fn do_init(dir: String) -> Result(Nil, KirError) {
   Ok(Nil)
 }
 
-fn do_install(dir: String) -> Result(Nil, KirError) {
+fn do_install(dir: String, frozen: Bool) -> Result(Nil, KirError) {
   use cfg <- result.try(
     config.read_kir_toml(dir)
     |> result.map_error(ConfigErr),
@@ -224,22 +261,52 @@ fn do_install(dir: String) -> Result(Nil, KirError) {
     lockfile.read(dir)
     |> result.map_error(fn(_) { Nil })
   io.println("Resolving dependencies...")
-  use resolved <- result.try(
-    resolver.resolve(cfg, existing_lock)
+  use resolve_result <- result.try(
+    resolver.resolve_full(cfg, existing_lock)
     |> result.map_error(ResolveErr),
-  )
-  let lock = lockfile.from_packages(resolved)
-  use _ <- result.try(
-    lockfile.write(lock, dir)
-    |> result.map_error(LockErr),
   )
   io.println(
     ansi.green("Resolved")
     <> " "
-    <> int.to_string(list.length(resolved))
-    <> " packages, wrote kir.lock",
+    <> int.to_string(list.length(resolve_result.packages))
+    <> " packages",
   )
-  Ok(Nil)
+  // --frozen: lockfile 일치 검증만 수행
+  case frozen {
+    True -> {
+      use lock <- result.try(
+        lockfile.read(dir)
+        |> result.map_error(LockErr),
+      )
+      use _ <- result.try(
+        lockfile.verify_frozen(lock, resolve_result.packages)
+        |> result.map_error(LockErr),
+      )
+      io.println(ansi.green("Verified") <> " lockfile matches (--frozen)")
+      Ok(Nil)
+    }
+    False -> {
+      // 다운로드 → 저장 → 설치
+      io.println("Downloading and installing...")
+      use installed <- result.try(
+        pipeline.run(resolve_result, dir)
+        |> result.map_error(PipelineErr),
+      )
+      // lockfile 기록 (실제 sha256 포함)
+      let lock = lockfile.from_packages(installed)
+      use _ <- result.try(
+        lockfile.write(lock, dir)
+        |> result.map_error(LockErr),
+      )
+      io.println(
+        ansi.green("Installed")
+        <> " "
+        <> int.to_string(list.length(installed))
+        <> " packages, wrote kir.lock",
+      )
+      Ok(Nil)
+    }
+  }
 }
 
 fn do_add(
@@ -283,7 +350,32 @@ fn do_add(
     }
     <> "]",
   )
-  Ok(Nil)
+  do_install(dir, False)
+}
+
+fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_kir_toml(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let registry = case is_npm {
+    True -> Npm
+    False -> detect_registry(name)
+  }
+  let updated = config.remove_dependency(cfg, name, registry)
+  use _ <- result.try(
+    config.write_kir_toml(updated, dir)
+    |> result.map_error(ConfigErr),
+  )
+  io.println(
+    ansi.red("Removed")
+    <> " "
+    <> name
+    <> " from ["
+    <> types.registry_to_string(registry)
+    <> "]",
+  )
+  do_install(dir, False)
 }
 
 fn do_tree(dir: String) -> Result(Nil, KirError) {

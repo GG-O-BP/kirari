@@ -1,8 +1,15 @@
 //// Erlang FFI 래퍼 — Gleam에서 직접 호출할 수 없는 BEAM 기능
 
-/// tar/tgz 아카이브를 dest 디렉토리에 압축 해제
+/// gzip tar 아카이브를 dest 디렉토리에 압축 해제
 @external(erlang, "kirari_ffi", "extract_tar")
 pub fn extract_tar(data: BitArray, dest: String) -> Result(Nil, String)
+
+/// 비압축 tar 아카이브를 dest 디렉토리에 해제 (Hex 외부 tarball용)
+@external(erlang, "kirari_ffi", "extract_tar_uncompressed")
+pub fn extract_tar_uncompressed(
+  data: BitArray,
+  dest: String,
+) -> Result(Nil, String)
 
 /// 하드링크 생성 (src → dst)
 @external(erlang, "kirari_ffi", "make_hardlink")

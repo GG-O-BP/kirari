@@ -1,6 +1,7 @@
 -module(kirari_ffi).
 -export([
     extract_tar/2,
+    extract_tar_uncompressed/2,
     make_hardlink/2,
     atomic_rename/2,
     get_home_dir/0,
@@ -12,6 +13,15 @@
 extract_tar(Data, Dest) when is_binary(Data), is_binary(Dest) ->
     DestStr = binary_to_list(Dest),
     case erl_tar:extract({binary, Data}, [compressed, {cwd, DestStr}]) of
+        ok -> {ok, nil};
+        {ok, _} -> {ok, nil};
+        {error, Reason} -> {error, list_to_binary(lists:flatten(io_lib:format("~p", [Reason])))}
+    end.
+
+%% 비압축 tar 해제 (Hex 외부 tarball용)
+extract_tar_uncompressed(Data, Dest) when is_binary(Data), is_binary(Dest) ->
+    DestStr = binary_to_list(Dest),
+    case erl_tar:extract({binary, Data}, [{cwd, DestStr}]) of
         ok -> {ok, nil};
         {ok, _} -> {ok, nil};
         {error, Reason} -> {error, list_to_binary(lists:flatten(io_lib:format("~p", [Reason])))}

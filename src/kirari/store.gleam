@@ -4,6 +4,7 @@ import gleam/result
 import gleam/string
 import kirari/platform
 import kirari/security
+import kirari/tarball
 import kirari/types.{type Registry}
 import simplifile
 
@@ -68,7 +69,7 @@ pub fn store_package(
   expected_sha256: String,
   _name: String,
   _version: String,
-  _registry: Registry,
+  registry: Registry,
 ) -> Result(String, StoreError) {
   // 1. 해시 검증
   use _ <- result.try(
@@ -95,8 +96,13 @@ pub fn store_package(
         |> result.map_error(fn(e) { IoError(e) }),
       )
       use _ <- result.try(
-        platform.extract_tar(data, tmp_dir)
-        |> result.map_error(fn(e) { ExtractError(e) }),
+        tarball.extract(data, tmp_dir, registry)
+        |> result.map_error(fn(e) {
+          case e {
+            tarball.ExtractError(d) -> ExtractError(d)
+            tarball.IoError(d) -> IoError(d)
+          }
+        }),
       )
 
       // 4. 2글자 prefix 디렉토리 생성

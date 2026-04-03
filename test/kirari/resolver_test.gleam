@@ -22,16 +22,19 @@ fn mock_fetch(
     "gleam_stdlib", Hex ->
       Ok([
         VersionInfo(
+          tarball_url: "",
           version: "0.44.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
         ),
         VersionInfo(
+          tarball_url: "",
           version: "0.45.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
         ),
         VersionInfo(
+          tarball_url: "",
           version: "1.0.0",
           published_at: "2025-01-01T00:00:00Z",
           dependencies: [],
@@ -40,6 +43,7 @@ fn mock_fetch(
     "gleam_json", Hex ->
       Ok([
         VersionInfo(
+          tarball_url: "",
           version: "3.0.0",
           published_at: "2024-03-01T00:00:00Z",
           dependencies: [
@@ -55,16 +59,19 @@ fn mock_fetch(
     "highlight.js", Npm ->
       Ok([
         VersionInfo(
+          tarball_url: "",
           version: "11.0.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
         ),
         VersionInfo(
+          tarball_url: "",
           version: "11.9.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
         ),
         VersionInfo(
+          tarball_url: "",
           version: "12.0.0",
           published_at: "2025-01-01T00:00:00Z",
           dependencies: [],
@@ -247,4 +254,30 @@ pub fn resolve_mixed_registries_test() {
   let assert Ok(resolved) =
     resolver.resolve_with(config, Error(Nil), mock_fetch)
   assert list.length(resolved) == 2
+}
+
+// ---------------------------------------------------------------------------
+// 전이 의존성
+// ---------------------------------------------------------------------------
+
+pub fn resolve_transitive_deps_test() {
+  // gleam_json만 직접 의존 — gleam_json은 gleam_stdlib에 의존
+  let config =
+    test_config([
+      Dependency(
+        name: "gleam_json",
+        version_constraint: ">= 3.0.0",
+        registry: Hex,
+        dev: False,
+      ),
+    ])
+  let assert Ok(resolved) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
+  // gleam_json + gleam_stdlib (전이) = 2개
+  assert list.length(resolved) == 2
+  let assert Ok(_) = list.find(resolved, fn(p) { p.name == "gleam_json" })
+  let assert Ok(stdlib) =
+    list.find(resolved, fn(p) { p.name == "gleam_stdlib" })
+  // 전이 의존성은 최고 버전 선택
+  assert stdlib.version == "1.0.0"
 }
