@@ -27,16 +27,19 @@ pub fn extract(
 
 /// Hex tarball: 비압축 외부 tar → contents.tar.gz 추출 → 압축 내부 tar 추출
 fn extract_hex(data: BitArray, dest: String) -> Result(Nil, TarballError) {
-  // 1. 임시 디렉토리에 외부 tar 해제 (비압축)
+  // 1. 임시 디렉토리에 외부 tar 해제 (비압축 → gzip fallback)
   let outer_dir = dest <> "__hex_outer"
   use _ <- result.try(
     simplifile.create_directory_all(outer_dir)
     |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
   )
-  use _ <- result.try(
-    platform.extract_tar_uncompressed(data, outer_dir)
-    |> result.map_error(fn(e) { ExtractError("hex outer tar: " <> e) }),
-  )
+  use _ <- result.try(case platform.extract_tar_uncompressed(data, outer_dir) {
+    Ok(_) -> Ok(Nil)
+    Error(_) ->
+      // gzip 압축된 outer tar fallback (일부 Hex 미러)
+      platform.extract_tar(data, outer_dir)
+      |> result.map_error(fn(e) { ExtractError("hex outer tar: " <> e) })
+  })
   // 2. contents.tar.gz 읽기
   let contents_path = outer_dir <> "/contents.tar.gz"
   use contents_data <- result.try(

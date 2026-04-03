@@ -77,6 +77,54 @@ fn mock_fetch(
           dependencies: [],
         ),
       ])
+    // 다이아몬드 충돌 테스트용
+    "pkg_a", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "pkg_shared",
+              version_constraint: ">= 1.0.0 and < 2.0.0",
+              registry: Hex,
+              dev: False,
+            ),
+          ],
+        ),
+      ])
+    "pkg_b", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "pkg_shared",
+              version_constraint: ">= 2.0.0",
+              registry: Hex,
+              dev: False,
+            ),
+          ],
+        ),
+      ])
+    "pkg_shared", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [],
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "2.0.0",
+          published_at: "2024-06-01T00:00:00Z",
+          dependencies: [],
+        ),
+      ])
     _, _ -> Error(resolver.PackageNotFound(name, registry))
   }
 }
@@ -281,3 +329,63 @@ pub fn resolve_transitive_deps_test() {
   // 전이 의존성은 최고 버전 선택
   assert stdlib.version == "1.0.0"
 }
+
+// ---------------------------------------------------------------------------
+// 다이아몬드 충돌 감지
+// ---------------------------------------------------------------------------
+
+pub fn resolve_diamond_conflict_test() {
+  // pkg_a → pkg_shared >= 1.0.0 and < 2.0.0
+  // pkg_b → pkg_shared >= 2.0.0
+  // greedy: pkg_a 먼저 해결 → pkg_shared@1.0.0
+  //         pkg_b 해결 → pkg_shared >= 2.0.0 but already @1.0.0 → 충돌!
+  let config =
+    test_config([
+      Dependency(
+        name: "pkg_a",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+      ),
+      Dependency(
+        name: "pkg_b",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+      ),
+    ])
+  let assert Error(resolver.IncompatibleVersions(package: pkg, constraints: cs)) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
+  // 에러에 패키지 이름과 충돌 제약 조건이 포함
+  assert {
+    let has_shared = string.contains(pkg, "pkg_shared")
+    has_shared
+  }
+  assert list.length(cs) >= 2
+}
+
+pub fn resolve_diamond_compatible_test() {
+  // 직접 의존: gleam_stdlib >= 0.44.0 and < 2.0.0
+  // gleam_json → gleam_stdlib >= 0.44.0 and < 2.0.0 (호환)
+  let config =
+    test_config([
+      Dependency(
+        name: "gleam_stdlib",
+        version_constraint: ">= 0.44.0 and < 2.0.0",
+        registry: Hex,
+        dev: False,
+      ),
+      Dependency(
+        name: "gleam_json",
+        version_constraint: ">= 3.0.0",
+        registry: Hex,
+        dev: False,
+      ),
+    ])
+  let assert Ok(resolved) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
+  // 호환 가능 → 정상 해결
+  assert list.length(resolved) == 2
+}
+
+import gleam/string

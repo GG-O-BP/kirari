@@ -45,6 +45,7 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["install"], do: install_cmd())
   |> glint.add(at: ["add"], do: add_cmd())
   |> glint.add(at: ["remove"], do: remove_cmd())
+  |> glint.add(at: ["update"], do: update_cmd())
   |> glint.add(at: ["tree"], do: tree_cmd())
   |> glint.add(at: ["export"], do: export_cmd())
   |> glint.run(args)
@@ -129,6 +130,9 @@ fn root_cmd() -> glint.Command(Nil) {
     io.println("  install   Resolve and install dependencies")
     io.println("  add       Add a dependency")
     io.println("  remove    Remove a dependency")
+    io.println(
+      "  update    Update all dependencies to latest compatible versions",
+    )
     io.println("  tree      Print dependency tree")
     io.println("  export    Export kir.toml → gleam.toml + package.json")
   })
@@ -153,9 +157,15 @@ fn install_cmd() -> glint.Command(Nil) {
     |> glint.flag_default(False)
     |> glint.flag_help("Verify lockfile matches without installing"),
   )
+  use exclude_newer_flag <- glint.flag(
+    glint.string_flag("exclude-newer")
+    |> glint.flag_default("")
+    |> glint.flag_help("Exclude versions published after timestamp (RFC 3339)"),
+  )
   glint.command(fn(_named, _args, flags) {
     let frozen = frozen_flag(flags) |> result.unwrap(False)
-    case do_install(".", frozen) {
+    let exclude_newer = exclude_newer_flag(flags) |> result.unwrap("")
+    case do_install(".", frozen, exclude_newer) {
       Ok(_) -> Nil
       Error(e) -> print_error(e)
     }
@@ -208,6 +218,18 @@ fn remove_cmd() -> glint.Command(Nil) {
   })
 }
 
+fn update_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help(
+    "Update all dependencies to latest compatible versions",
+  )
+  glint.command(fn(_named, _args, _flags) {
+    case do_update(".") {
+      Ok(_) -> Nil
+      Error(e) -> print_error(e)
+    }
+  })
+}
+
 fn tree_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Print the unified dependency tree")
   glint.command(fn(_named, _args, _flags) {
@@ -252,11 +274,24 @@ fn do_init(dir: String) -> Result(Nil, KirError) {
   Ok(Nil)
 }
 
-fn do_install(dir: String, frozen: Bool) -> Result(Nil, KirError) {
+fn do_install(
+  dir: String,
+  frozen: Bool,
+  exclude_newer: String,
+) -> Result(Nil, KirError) {
   use cfg <- result.try(
     config.read_kir_toml(dir)
     |> result.map_error(ConfigErr),
   )
+  // --exclude-newer 플래그로 오버라이드
+  let cfg = case exclude_newer {
+    "" -> cfg
+    ts ->
+      types.KirConfig(
+        ..cfg,
+        security: types.SecurityConfig(exclude_newer: Ok(ts)),
+      )
+  }
   let existing_lock =
     lockfile.read(dir)
     |> result.map_error(fn(_) { Nil })
@@ -304,9 +339,50 @@ fn do_install(dir: String, frozen: Bool) -> Result(Nil, KirError) {
         <> int.to_string(list.length(installed))
         <> " packages, wrote kir.lock",
       )
+      // gleam build 호환: gleam.toml + manifest.toml 자동 생성
+      let _ = export.export_with_lock(cfg, Ok(lock), dir)
+      // FFI 감지: 미선언 npm import 경고
+      warn_undeclared_npm(dir, cfg)
       Ok(Nil)
     }
   }
+}
+
+fn do_update(dir: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_kir_toml(dir)
+    |> result.map_error(ConfigErr),
+  )
+  io.println("Updating all dependencies...")
+  // lock 무시 — Error(Nil) 전달하여 전부 재해결
+  use resolve_result <- result.try(
+    resolver.resolve_full(cfg, Error(Nil))
+    |> result.map_error(ResolveErr),
+  )
+  io.println(
+    ansi.green("Resolved")
+    <> " "
+    <> int.to_string(list.length(resolve_result.packages))
+    <> " packages",
+  )
+  io.println("Downloading and installing...")
+  use installed <- result.try(
+    pipeline.run(resolve_result, dir)
+    |> result.map_error(PipelineErr),
+  )
+  let lock = lockfile.from_packages(installed)
+  use _ <- result.try(
+    lockfile.write(lock, dir)
+    |> result.map_error(LockErr),
+  )
+  io.println(
+    ansi.green("Updated")
+    <> " "
+    <> int.to_string(list.length(installed))
+    <> " packages, wrote kir.lock",
+  )
+  let _ = export.export_with_lock(cfg, Ok(lock), dir)
+  Ok(Nil)
 }
 
 fn do_add(
@@ -350,7 +426,7 @@ fn do_add(
     }
     <> "]",
   )
-  do_install(dir, False)
+  do_install(dir, False, "")
 }
 
 fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
@@ -375,7 +451,7 @@ fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
     <> types.registry_to_string(registry)
     <> "]",
   )
-  do_install(dir, False)
+  do_install(dir, False, "")
 }
 
 fn do_tree(dir: String) -> Result(Nil, KirError) {
@@ -428,5 +504,23 @@ fn detect_registry(name: String) -> types.Registry {
   case string.starts_with(name, "@") {
     True -> Npm
     False -> Hex
+  }
+}
+
+fn warn_undeclared_npm(dir: String, cfg: KirConfig) -> Nil {
+  case ffi_detect.detect_npm_imports(dir) {
+    Ok(detections) -> {
+      let undeclared = ffi_detect.find_undeclared(detections, cfg)
+      case undeclared {
+        [] -> Nil
+        _ -> {
+          io.println(
+            ansi.yellow("Warning:") <> " undeclared npm imports detected:",
+          )
+          list.each(undeclared, fn(d) { io.println("  " <> d.package_name) })
+        }
+      }
+    }
+    Error(_) -> Nil
   }
 }

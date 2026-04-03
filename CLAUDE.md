@@ -16,9 +16,9 @@ CLI 명령어는 `kir`. 프로그램 자체를 지칭할 때는 kirari.
 
 ## 설계 원칙
 
-1. kir.toml이 유일한 정본 — gleam.toml/package.json은 `kir export` 레거시 산출물
+1. kir.toml이 유일한 정본 — gleam.toml/package.json/manifest.toml은 자동 생성 산출물
 2. content-addressable store (~/.kir/store) — SHA256 기반, 하드링크 설치
-3. 병렬 다운로드 — 직렬 설치는 채택하지 않음
+3. 병렬 다운로드 — gleam/erlang/process 기반, 재시도 3회
 4. 결정론적 lockfile — 동일 입력이면 동일 kir.lock 출력
 5. 공급망 보안 기본 강제 — --exclude-newer, SHA256 해시 검증
 
@@ -27,17 +27,20 @@ CLI 명령어는 `kir`. 프로그램 자체를 지칭할 때는 kirari.
 | 명령어 | 역할 |
 |--------|------|
 | `kir init` | gleam.toml + package.json → kir.toml 마이그레이션 |
-| `kir install` | Hex+npm 의존성 해결·설치, kir.lock 생성 |
-| `kir add <pkg>` | 의존성 추가 (Hex/npm 자동 감지) |
+| `kir install [--frozen] [--exclude-newer=TS]` | Hex+npm 의존성 해결·다운로드·설치, kir.lock + gleam.toml + manifest.toml 생성 |
+| `kir update` | lock 무시, 전체 재해결·재설치 |
+| `kir add <pkg> [--npm] [--dev]` | 의존성 추가 후 자동 install |
+| `kir remove <pkg> [--npm]` | 의존성 제거 후 자동 reinstall |
 | `kir tree` | 통합 의존성 트리 출력 |
-| `kir export` | kir.toml → gleam.toml + package.json 내보내기 |
+| `kir export` | kir.toml → gleam.toml + package.json + manifest.toml 내보내기 |
 
 ## 모듈 배치
 
 소스는 src/kirari/ 아래에 모듈별 파일로 배치. 진입점은 src/kirari.gleam.
 
-주요 모듈: cli, config, lockfile, resolver, registry/hex, registry/npm,
-store, installer, ffi, security, tree, export, types
+주요 모듈: cli, config, migrate, lockfile, resolver, pipeline,
+registry/hex, registry/npm, store, tarball, installer,
+ffi, security, tree, export, types, platform, semver
 
 ## Gleam 규칙
 
@@ -46,5 +49,3 @@ store, installer, ffi, security, tree, export, types
 - public 함수에 타입 어노테이션 필수
 - 내부 불변량 타입은 opaque type
 - 타겟: Erlang (BEAM)
-
-<!-- rules/ 아래 도메인 규칙은 해당 모듈 작업 시 자동 로드됨 -->

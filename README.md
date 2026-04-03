@@ -8,10 +8,11 @@ Written in Gleam, targeting Erlang (BEAM).
 
 - **Single source of truth** — `kir.toml` is the only manifest you need
 - **Content-addressable store** — SHA256-based `~/.kir/store` with hardlink installs
-- **Parallel downloads** — concurrent dependency fetching
+- **Parallel downloads** — concurrent dependency fetching with automatic retry
 - **Deterministic lockfile** — same input always produces the same `kir.lock`
 - **Supply chain security** — `--exclude-newer` and SHA256 hash verification by default
-- **FFI detection** — auto-detects undeclared npm imports in `.mjs` files
+- **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
+- **`gleam build` compatible** — auto-generates `gleam.toml` + `manifest.toml` after install
 
 ## Installation
 
@@ -28,10 +29,19 @@ gleam build
 | Command | Description |
 |---------|-------------|
 | `kir init` | Migrate from `gleam.toml` + `package.json` to `kir.toml` |
-| `kir install` | Resolve and install Hex+npm dependencies, generate `kir.lock` |
-| `kir add <pkg> [--npm] [--dev]` | Add a dependency (auto-detects Hex or npm) |
+| `kir install [--frozen] [--exclude-newer=<TS>]` | Resolve and install dependencies, generate `kir.lock` |
+| `kir update` | Update all dependencies to latest compatible versions (ignores lock) |
+| `kir add <pkg> [--npm] [--dev]` | Add a dependency and install (auto-detects Hex or npm) |
+| `kir remove <pkg> [--npm]` | Remove a dependency and reinstall |
 | `kir tree` | Print the unified dependency tree |
-| `kir export` | Export `kir.toml` back to `gleam.toml` + `package.json` |
+| `kir export` | Export `kir.toml` back to `gleam.toml` + `package.json` + `manifest.toml` |
+
+### Flags
+
+- `--frozen` — Verify lockfile matches resolution without downloading or installing. For CI.
+- `--exclude-newer=<TIMESTAMP>` — Exclude versions published after the given RFC 3339 timestamp. Overrides `[security] exclude-newer` in `kir.toml`.
+- `--npm` — Force npm registry (for `add` and `remove`).
+- `--dev` — Add as dev dependency (for `add`).
 
 ## kir.toml
 
@@ -83,13 +93,13 @@ CI usage: `kir install --frozen` fails if the lock doesn't match resolved depend
 | **Lockfile** | `manifest.toml` | `kir.lock` |
 | **Lockfile hash** | `outer_checksum` (SHA256, from Hex registry) | `sha256` (SHA256, computed locally) |
 | **npm dependency management** | Not managed; requires separate `package.json` and npm/yarn/pnpm | Native; declared in `kir.toml [npm]`, resolved alongside Hex |
-| **Dependency resolution** | PubGrub (backtracking) | Greedy (highest compatible, no backtracking) |
+| **Dependency resolution** | PubGrub (backtracking) | Greedy (highest compatible, no backtracking, diamond conflict detection) |
 | **Local package store** | Downloads to `build/packages/` per project | Content-addressable `~/.kir/store/` shared across projects |
 | **Installation method** | Copy | Hardlink with copy fallback |
-| **`exclude-newer`** | Not available | `[security] exclude-newer` limits resolution to versions published before a timestamp |
+| **`exclude-newer`** | Not available | `[security] exclude-newer` or `--exclude-newer` flag |
 | **Dependency tree** | `gleam deps tree` | `kir tree` |
-| **FFI import detection** | Not available | Scans `.mjs` in `build/packages/` for undeclared npm bare imports |
-| **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` generates `gleam.toml` + `package.json` from `kir.toml` |
+| **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
+| **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` generates `gleam.toml` + `package.json` + `manifest.toml` |
 | **Migration** | N/A | `kir init` reads existing `gleam.toml` + `package.json` into `kir.toml` |
 | **Written in** | Rust | Gleam |
 
@@ -100,18 +110,21 @@ src/kirari.gleam          Entry point
 src/kirari/
   cli.gleam               CLI dispatcher (glint)
   types.gleam             Shared domain types
-  config.gleam            kir.toml / gleam.toml / package.json parsing
+  config.gleam            kir.toml parsing/serialization
+  migrate.gleam           gleam.toml + package.json migration
   semver.gleam            SemVer parsing, Hex + npm constraint matching
-  resolver.gleam          Greedy dependency resolution
+  resolver.gleam          Dependency resolution with transitive deps + diamond conflict detection
   lockfile.gleam          kir.lock read/write
+  pipeline.gleam          Download → store → install orchestration
   security.gleam          SHA256, path validation, exclude-newer
   registry/hex.gleam      Hex.pm API client
   registry/npm.gleam      npm registry API client
   store.gleam             Content-addressable package store
+  tarball.gleam           Hex double-tar + npm tgz extraction
   installer.gleam         Hardlink/copy installation
   platform.gleam          Erlang FFI wrappers
   tree.gleam              Dependency tree rendering
-  export.gleam            Legacy gleam.toml + package.json export
+  export.gleam            gleam.toml + package.json + manifest.toml export
   ffi.gleam               Bare import detection in .mjs files
 src/kirari_ffi.erl        Erlang FFI (tar, hardlink, rename)
 ```
@@ -120,10 +133,17 @@ src/kirari_ffi.erl        Erlang FFI (tar, hardlink, rename)
 
 ```sh
 gleam build    # Build the project
-gleam test     # Run the tests (101 tests)
+gleam test     # Run the tests
 gleam check    # Type check
 gleam format   # Format source code
 gleam run      # Run kirari
+```
+
+### Deployment
+
+```sh
+gleam export erlang-shipment
+# Run with: build/erlang-shipment/entrypoint.sh
 ```
 
 ## License

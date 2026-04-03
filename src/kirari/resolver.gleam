@@ -2,6 +2,7 @@
 
 import gleam/dict.{type Dict}
 import gleam/list
+import gleam/option
 import gleam/result
 import gleam/string
 import kirari/registry/hex
@@ -94,6 +95,7 @@ pub fn resolve_full_with(
     direct_deps,
     dict.new(),
     dict.new(),
+    dict.new(),
     existing_lock,
     exclude_newer,
     fetch,
@@ -105,10 +107,13 @@ pub fn resolve_full_with(
 // Greedy 해결 루프
 // ---------------------------------------------------------------------------
 
+/// constraints_map: 패키지 key → 해당 패키지에 부여된 제약 조건 목록
+/// 다이아몬드 충돌 감지 및 에러 메시지에 사용
 fn do_resolve(
   queue: List(Dependency),
   resolved: Dict(String, ResolvedPackage),
   version_cache: Dict(String, VersionInfo),
+  constraints_map: Dict(String, List(String)),
   existing_lock: Result(KirLock, Nil),
   exclude_newer: Result(String, Nil),
   fetch: FetchVersions,
@@ -123,18 +128,30 @@ fn do_resolve(
       ))
     [dep, ..rest] -> {
       let key = dep.name <> ":" <> types.registry_to_string(dep.registry)
-      case dict.has_key(resolved, key) {
-        True ->
+      // 제약 조건 기록
+      let constraints_map =
+        dict.upsert(constraints_map, key, fn(existing) {
+          case existing {
+            option.Some(cs) -> [dep.version_constraint, ..cs]
+            option.None -> [dep.version_constraint]
+          }
+        })
+      case dict.get(resolved, key) {
+        // 이미 해결됨 → 새 제약 조건과 호환 검증
+        Ok(pkg) -> {
+          use _ <- result.try(verify_compatible(pkg, dep, constraints_map))
           do_resolve(
             rest,
             resolved,
             version_cache,
+            constraints_map,
             existing_lock,
             exclude_newer,
             fetch,
             visited,
           )
-        False -> {
+        }
+        Error(_) -> {
           case list.contains(visited, key) {
             True -> Error(CyclicDependency([key, ..visited]))
             False -> {
@@ -151,6 +168,7 @@ fn do_resolve(
                 list.append(rest, transitive),
                 new_resolved,
                 new_cache,
+                constraints_map,
                 existing_lock,
                 exclude_newer,
                 fetch,
@@ -161,6 +179,38 @@ fn do_resolve(
         }
       }
     }
+  }
+}
+
+/// 이미 해결된 버전이 새 제약 조건을 만족하는지 검증
+fn verify_compatible(
+  pkg: ResolvedPackage,
+  dep: Dependency,
+  constraints_map: Dict(String, List(String)),
+) -> Result(Nil, ResolverError) {
+  case parse_constraint(dep) {
+    Ok(constraint) -> {
+      case semver.parse_version(pkg.version) {
+        Ok(version) ->
+          case semver.satisfies(version, constraint) {
+            True -> Ok(Nil)
+            False -> {
+              let key =
+                dep.name <> ":" <> types.registry_to_string(dep.registry)
+              let all_constraints = case dict.get(constraints_map, key) {
+                Ok(cs) -> cs
+                Error(_) -> [dep.version_constraint]
+              }
+              Error(IncompatibleVersions(
+                package: dep.name <> "@" <> pkg.version,
+                constraints: all_constraints,
+              ))
+            }
+          }
+        Error(_) -> Ok(Nil)
+      }
+    }
+    Error(_) -> Ok(Nil)
   }
 }
 

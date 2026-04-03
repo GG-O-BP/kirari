@@ -118,14 +118,15 @@ fn download_and_store_one(
   case already_stored {
     True -> Ok(pkg)
     False -> {
-      // tarball URL 조회
+      // tarball URL 조회 (빈 문자열이면 기본 URL 생성)
       let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
       let tarball_url = case dict.get(version_infos, key) {
         Ok(vi) -> vi.tarball_url
         Error(_) -> ""
       }
-      // 다운로드
-      use #(data, sha256) <- result.try(download_tarball(pkg, tarball_url))
+      let tarball_url = resolve_tarball_url(pkg, tarball_url)
+      // 다운로드 (3회 재시도)
+      use #(data, sha256) <- result.try(download_with_retry(pkg, tarball_url, 3))
       // store에 저장
       use _ <- result.try(
         store.store_package(data, sha256, pkg.name, pkg.version, pkg.registry)
@@ -133,6 +134,52 @@ fn download_and_store_one(
       )
       Ok(ResolvedPackage(..pkg, sha256: sha256))
     }
+  }
+}
+
+fn resolve_tarball_url(pkg: ResolvedPackage, url: String) -> String {
+  case url {
+    "" ->
+      case pkg.registry {
+        Hex ->
+          "https://repo.hex.pm/tarballs/"
+          <> pkg.name
+          <> "-"
+          <> pkg.version
+          <> ".tar"
+        Npm -> {
+          let base = case string.split(pkg.name, "/") {
+            [_scope, name, ..] -> name
+            _ -> pkg.name
+          }
+          "https://registry.npmjs.org/"
+          <> npm.encode_package_name(pkg.name)
+          <> "/-/"
+          <> base
+          <> "-"
+          <> pkg.version
+          <> ".tgz"
+        }
+      }
+    _ -> url
+  }
+}
+
+fn download_with_retry(
+  pkg: ResolvedPackage,
+  tarball_url: String,
+  attempts: Int,
+) -> Result(#(BitArray, String), PipelineError) {
+  case download_tarball(pkg, tarball_url) {
+    Ok(result) -> Ok(result)
+    Error(e) ->
+      case attempts > 1 {
+        True -> {
+          process.sleep(2000)
+          download_with_retry(pkg, tarball_url, attempts - 1)
+        }
+        False -> Error(e)
+      }
   }
 }
 
