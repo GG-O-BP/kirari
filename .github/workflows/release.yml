@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            archive: tar.gz
+          - os: windows-latest
+            name: windows-x86_64
+            archive: zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          gleam-version: "1.15.2"
+          rebar3-version: "3"
+
+      - run: gleam test
+      - run: gleam export erlang-shipment
+
+      - name: Add kir wrapper (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cat > build/erlang-shipment/kir << 'SCRIPT'
+          #!/bin/sh
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec erl -pa "$SCRIPT_DIR"/*/ebin -eval "kirari@@main:run(kirari)" -noshell -extra "$@"
+          SCRIPT
+          chmod +x build/erlang-shipment/kir
+
+      - name: Add kir wrapper (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cat > build/erlang-shipment/kir.bat << 'SCRIPT'
+          @echo off
+          erl -pa "%~dp0\*\ebin" -eval "kirari@@main:run(kirari)" -noshell -extra %*
+          SCRIPT
+
+      - name: Archive (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: tar -czf kirari-${{ matrix.name }}.tar.gz -C build erlang-shipment
+
+      - name: Archive (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: Compress-Archive -Path build/erlang-shipment -DestinationPath kirari-${{ matrix.name }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kirari-${{ matrix.name }}
+          path: kirari-${{ matrix.name }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/kirari-linux-x86_64.tar.gz
+            artifacts/kirari-windows-x86_64.zip
