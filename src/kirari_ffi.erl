@@ -8,6 +8,7 @@
     halt/1,
     make_temp_dir/1,
     run_command/1,
+    exec_command/1,
     app_version/0
 ]).
 
@@ -112,4 +113,19 @@ collect_port(Port, Acc) ->
             {ok, Acc};
         {Port, {exit_status, Code}} ->
             {error, {Code, Acc}}
+    end.
+
+%% 셸 명령어 실행 — stdout/stderr를 실시간 스트리밍, 종료 코드 반환
+exec_command(Cmd) when is_binary(Cmd) ->
+    CmdStr = binary_to_list(Cmd),
+    Port = open_port({spawn, CmdStr}, [stream, exit_status, binary, stderr_to_stdout]),
+    stream_port(Port).
+
+stream_port(Port) ->
+    receive
+        {Port, {data, Data}} ->
+            io:put_chars(Data),
+            stream_port(Port);
+        {Port, {exit_status, Code}} ->
+            Code
     end.

@@ -850,11 +850,10 @@ fn do_publish(dir: String, replace: Bool, yes: Bool) -> Nil {
 }
 
 fn run_gleam_cmd(cmd: String) -> Nil {
-  case platform.run_command(cmd) {
-    Ok(output) -> io.print(output)
-    Error(#(_code, output)) -> {
-      io.print(output)
-    }
+  let code = platform.exec_command(cmd)
+  case code {
+    0 -> Nil
+    _ -> platform.halt(code)
   }
 }
 

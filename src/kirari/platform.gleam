@@ -38,3 +38,7 @@ pub fn app_version() -> Result(String, Nil)
 /// 셸 명령어 실행 — 성공 시 stdout, 실패 시 #(exit_code, output)
 @external(erlang, "kirari_ffi", "run_command")
 pub fn run_command(cmd: String) -> Result(String, #(Int, String))
+
+/// 셸 명령어 실행 — stdout/stderr 실시간 스트리밍, 종료 코드 반환
+@external(erlang, "kirari_ffi", "exec_command")
+pub fn exec_command(cmd: String) -> Int
