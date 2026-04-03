@@ -45,7 +45,7 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
       Ok(Nil)
     }
     ["--version"] | ["-v"] -> {
-      io.println("kirari 1.0.0")
+      io.println("kirari " <> read_version())
       Ok(Nil)
     }
     _ -> run_glint(args)
@@ -861,6 +861,10 @@ fn run_gleam_cmd(cmd: String) -> Nil {
 // ---------------------------------------------------------------------------
 // 헬퍼
 // ---------------------------------------------------------------------------
+
+fn read_version() -> String {
+  platform.app_version() |> result.unwrap("unknown")
+}
 
 fn merge_npm_deps(config: KirConfig, npm_deps: List(Dependency)) -> KirConfig {
   let prod = list.filter(npm_deps, fn(d) { !d.dev })

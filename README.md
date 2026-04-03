@@ -36,6 +36,25 @@ Expand-Archive -Path "$env:TEMP\kirari.zip" -DestinationPath C:\kirari -Force
 kir --version
 ```
 
+### Update
+
+To update kirari to the latest version, re-run the installation commands above. Existing files will be overwritten.
+
+**Linux/macOS:**
+
+```sh
+curl -fsSL https://github.com/GG-O-BP/kirari/releases/latest/download/kirari-linux-x86_64.tar.gz | sudo tar -xz -C /usr/local/lib
+kir --version
+```
+
+**Windows:**
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/GG-O-BP/kirari/releases/latest/download/kirari-windows-x86_64.zip" -OutFile "$env:TEMP\kirari.zip"
+Expand-Archive -Path "$env:TEMP\kirari.zip" -DestinationPath C:\kirari -Force
+kir --version
+```
+
 ### Quick Start
 
 ```sh

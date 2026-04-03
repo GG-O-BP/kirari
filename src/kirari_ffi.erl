@@ -7,7 +7,8 @@
     get_home_dir/0,
     halt/1,
     make_temp_dir/1,
-    run_command/1
+    run_command/1,
+    app_version/0
 ]).
 
 %% tar/tgz 압축 해제
@@ -87,6 +88,14 @@ del_dir_recursive(Dir) ->
             end, Files),
             file:del_dir(Dir);
         {error, _} -> ok
+    end.
+
+%% 애플리케이션 버전 — .app 메타데이터에서 읽기
+app_version() ->
+    _ = application:load(kirari),
+    case application:get_key(kirari, vsn) of
+        {ok, Vsn} -> {ok, list_to_binary(Vsn)};
+        undefined -> {error, nil}
     end.
 
 %% 셸 명령어 실행 — 종료 코드와 출력 반환
