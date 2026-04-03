@@ -29,8 +29,8 @@ kir --version
 ### Windows
 
 ```powershell
-# Download kirari-windows-x86_64.zip from GitHub Releases
-Expand-Archive kirari-windows-x86_64.zip -DestinationPath C:\kirari
+Invoke-WebRequest -Uri "https://github.com/GG-O-BP/kirari/releases/latest/download/kirari-windows-x86_64.zip" -OutFile "$env:TEMP\kirari.zip"
+Expand-Archive -Path "$env:TEMP\kirari.zip" -DestinationPath C:\kirari -Force
 [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\kirari\erlang-shipment", "User")
 # Restart terminal, then:
 kir --version
