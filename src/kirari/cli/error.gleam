@@ -67,6 +67,8 @@ pub fn format_error(error: KirError) -> String {
         resolver.RegistryError(d) -> "registry error: " <> d
         resolver.CyclicDependency(c) ->
           "cyclic dependency: " <> string.join(c, " → ")
+        resolver.ResolutionConflict(explanation) ->
+          "dependency resolution failed:\n" <> explanation
       }
     PipelineErr(e) ->
       case e {

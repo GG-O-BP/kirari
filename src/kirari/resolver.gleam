@@ -1,18 +1,16 @@
-//// 의존성 해결 — Greedy 알고리즘, DI 기반 레지스트리 주입
+//// 의존성 해결 — PubGrub 알고리즘, DI 기반 레지스트리 주입
 
 import gleam/dict.{type Dict}
 import gleam/list
-import gleam/option
 import gleam/result
 import gleam/string
-import kirari/platform
 import kirari/registry/hex
 import kirari/registry/npm
-import kirari/security
-import kirari/semver.{type Constraint}
+import kirari/resolver/pubgrub
+import kirari/semver
 import kirari/types.{
   type Dependency, type KirConfig, type KirLock, type Registry,
-  type ResolvedPackage, Hex, Npm, ResolvedPackage,
+  type ResolvedPackage, Hex, Npm,
 }
 
 /// resolver 에러 타입
@@ -21,6 +19,7 @@ pub type ResolverError {
   PackageNotFound(name: String, registry: Registry)
   RegistryError(detail: String)
   CyclicDependency(cycle: List(String))
+  ResolutionConflict(explanation: String)
 }
 
 /// 레지스트리에서 가져온 버전 정보 (통합)
@@ -94,19 +93,18 @@ pub fn resolve(
 }
 
 /// 레지스트리 함수를 주입하여 의존성 해결 (테스트용)
-/// mock_fetch가 dependencies를 이미 포함하므로 release deps 조회 불필요
 pub fn resolve_with(
   config: KirConfig,
   existing_lock: Result(KirLock, Nil),
   fetch: FetchVersions,
 ) -> Result(List(ResolvedPackage), ResolverError) {
-  use result <- result.try(resolve_full_with_deps(
+  use r <- result.try(resolve_full_with_deps(
     config,
     existing_lock,
     fetch,
     no_op_fetch_deps,
   ))
-  Ok(result.packages)
+  Ok(r.packages)
 }
 
 fn no_op_fetch_deps(
@@ -139,6 +137,10 @@ pub fn resolve_full_with(
   )
 }
 
+// ---------------------------------------------------------------------------
+// PubGrub 위임
+// ---------------------------------------------------------------------------
+
 fn resolve_full_with_deps(
   config: KirConfig,
   existing_lock: Result(KirLock, Nil),
@@ -156,304 +158,180 @@ fn resolve_full_with_deps(
     Ok(ts) -> Ok(ts)
     Error(_) -> Error(Nil)
   }
-  do_resolve(
-    direct_deps,
-    dict.new(),
-    dict.new(),
-    dict.new(),
-    existing_lock,
-    exclude_newer,
-    fetch,
-    fetch_deps,
-    [],
+
+  // FetchVersions를 PubGrub 형식으로 변환
+  let pubgrub_fetch = fn(name: String, registry: Registry) {
+    use vis <- result.try(
+      fetch(name, registry)
+      |> result.map_error(convert_error),
+    )
+    Ok(list.map(vis, version_info_to_compact))
+  }
+
+  // FetchReleaseDeps를 PubGrub 형식으로 변환
+  let pubgrub_fetch_deps = fn(name: String, version: String, registry: Registry) {
+    fetch_deps(name, version, registry)
+    |> result.map_error(convert_error)
+  }
+
+  let ctx =
+    pubgrub.SolverContext(
+      fetch_versions: pubgrub_fetch,
+      fetch_deps: pubgrub_fetch_deps,
+      existing_lock: existing_lock,
+      exclude_newer: exclude_newer,
+    )
+
+  use solve_result <- result.try(
+    pubgrub.solve(direct_deps, ctx)
+    |> result.map_error(convert_pubgrub_error),
+  )
+
+  // PubGrub 결과를 ResolveResult로 변환
+  let entries = solve_result.entries
+  let resolved_dict = dict.map_values(entries, fn(_key, pair) { pair.0 })
+  let packages =
+    dict.values(resolved_dict)
+    |> list.sort(types.compare_packages)
+
+  // 전체 VersionInfo (tarball_url 등 포함) 재구축
+  let version_infos = build_version_infos(entries, fetch)
+
+  // peer dependency 검증
+  let peer_warnings = verify_peer_dependencies(resolved_dict, version_infos)
+
+  Ok(ResolveResult(
+    packages: packages,
+    version_infos: version_infos,
+    peer_warnings: peer_warnings,
+  ))
+}
+
+fn version_info_to_compact(vi: VersionInfo) -> pubgrub.VersionInfoCompact {
+  pubgrub.VersionInfoCompact(
+    version: vi.version,
+    published_at: vi.published_at,
+    dependencies: vi.dependencies,
+    optional_dependencies: vi.optional_dependencies,
+    os: vi.os,
+    cpu: vi.cpu,
+    license: vi.license,
+  )
+}
+
+fn convert_error(e: ResolverError) -> pubgrub.PubGrubError {
+  case e {
+    PackageNotFound(name, registry) -> pubgrub.PkgNotFound(name, registry)
+    RegistryError(d) -> pubgrub.RegError(d)
+    ResolutionConflict(ex) -> pubgrub.ResolutionConflict(ex)
+    IncompatibleVersions(pkg, cs) ->
+      pubgrub.ResolutionConflict(
+        "no compatible version for "
+        <> pkg
+        <> " ("
+        <> string.join(cs, ", ")
+        <> ")",
+      )
+    CyclicDependency(c) ->
+      pubgrub.ResolutionConflict("cyclic dependency: " <> string.join(c, " → "))
+  }
+}
+
+fn convert_pubgrub_error(e: pubgrub.PubGrubError) -> ResolverError {
+  case e {
+    pubgrub.ResolutionConflict(explanation) -> ResolutionConflict(explanation)
+    pubgrub.PkgNotFound(name, registry) -> PackageNotFound(name, registry)
+    pubgrub.RegError(detail) -> RegistryError(detail)
+  }
+}
+
+/// PubGrub 결과에서 전체 VersionInfo 재구축 (tarball_url, signatures 등 포함)
+fn build_version_infos(
+  entries: Dict(String, #(ResolvedPackage, pubgrub.VersionInfoCompact)),
+  fetch: FetchVersions,
+) -> Dict(String, VersionInfo) {
+  dict.fold(entries, dict.new(), fn(acc, key, pair) {
+    let #(pkg, compact) = pair
+    // 레지스트리에서 전체 VersionInfo 조회하여 tarball_url 등 복원
+    let full_vi = case fetch(pkg.name, pkg.registry) {
+      Ok(vis) ->
+        case list.find(vis, fn(v) { v.version == pkg.version }) {
+          Ok(vi) -> vi
+          Error(_) -> compact_to_full(compact)
+        }
+      Error(_) -> compact_to_full(compact)
+    }
+    dict.insert(acc, key, full_vi)
+  })
+}
+
+fn compact_to_full(c: pubgrub.VersionInfoCompact) -> VersionInfo {
+  VersionInfo(
+    version: c.version,
+    published_at: c.published_at,
+    tarball_url: "",
+    dependencies: c.dependencies,
+    peer_dependencies: [],
+    optional_dependencies: c.optional_dependencies,
+    os: c.os,
+    cpu: c.cpu,
+    has_scripts: False,
+    signatures: [],
+    integrity: "",
+    deprecated: "",
+    license: c.license,
   )
 }
 
 // ---------------------------------------------------------------------------
-// Greedy 해결 루프
+// peer dependency 검증 (post-resolution)
 // ---------------------------------------------------------------------------
 
-/// constraints_map: 패키지 key → 해당 패키지에 부여된 제약 조건 목록
-/// 다이아몬드 충돌 감지 및 에러 메시지에 사용
-fn do_resolve(
-  queue: List(Dependency),
+fn verify_peer_dependencies(
   resolved: Dict(String, ResolvedPackage),
   version_cache: Dict(String, VersionInfo),
-  constraints_map: Dict(String, List(String)),
-  existing_lock: Result(KirLock, Nil),
-  exclude_newer: Result(String, Nil),
-  fetch: FetchVersions,
-  fetch_deps: FetchReleaseDeps,
-  visited: List(String),
-) -> Result(ResolveResult, ResolverError) {
-  case queue {
-    [] -> {
-      let peer_warnings = verify_peer_dependencies(resolved, version_cache)
-      Ok(ResolveResult(
-        packages: dict.values(resolved)
-          |> list.sort(types.compare_packages),
-        version_infos: version_cache,
-        peer_warnings: peer_warnings,
-      ))
+) -> List(PeerWarning) {
+  dict.to_list(version_cache)
+  |> list.flat_map(fn(entry) {
+    let #(key, vi) = entry
+    let package_name = case string.split_once(key, ":") {
+      Ok(#(name, _)) -> name
+      Error(_) -> key
     }
-    [dep, ..rest] -> {
-      let key = dep.name <> ":" <> types.registry_to_string(dep.registry)
-      // 제약 조건 기록
-      let constraints_map =
-        dict.upsert(constraints_map, key, fn(existing) {
-          case existing {
-            option.Some(cs) -> [dep.version_constraint, ..cs]
-            option.None -> [dep.version_constraint]
-          }
-        })
-      case dict.get(resolved, key) {
-        // 이미 해결됨 → 새 제약 조건과 호환 검증
-        Ok(pkg) -> {
-          use _ <- result.try(verify_compatible(pkg, dep, constraints_map))
-          do_resolve(
-            rest,
-            resolved,
-            version_cache,
-            constraints_map,
-            existing_lock,
-            exclude_newer,
-            fetch,
-            fetch_deps,
-            visited,
-          )
-        }
-        Error(_) -> {
-          case list.contains(visited, key) {
-            True -> Error(CyclicDependency([key, ..visited]))
-            False -> {
-              case resolve_one(dep, existing_lock, exclude_newer, fetch) {
-                Ok(#(pkg, vi)) -> {
-                  // 의존성이 비어있으면 개별 release API에서 조회
-                  use vi <- result.try(enrich_dependencies(
-                    vi,
-                    pkg.name,
-                    pkg.version,
-                    dep.registry,
-                    fetch_deps,
-                  ))
-                  let new_resolved = dict.insert(resolved, key, pkg)
-                  let new_cache = dict.insert(version_cache, key, vi)
-                  // 전이 의존성 + optional 의존성 모두 큐에 추가
-                  let transitive =
-                    list.append(vi.dependencies, vi.optional_dependencies)
-                  do_resolve(
-                    list.append(rest, transitive),
-                    new_resolved,
-                    new_cache,
-                    constraints_map,
-                    existing_lock,
-                    exclude_newer,
-                    fetch,
-                    fetch_deps,
-                    [key, ..visited],
-                  )
-                }
-                Error(_) if dep.optional -> {
-                  // optional 의존성 해결 실패 → 건너뛰고 계속
-                  do_resolve(
-                    rest,
-                    resolved,
-                    version_cache,
-                    constraints_map,
-                    existing_lock,
-                    exclude_newer,
-                    fetch,
-                    fetch_deps,
-                    visited,
-                  )
-                }
-                Error(e) -> Error(e)
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-/// 이미 해결된 버전이 새 제약 조건을 만족하는지 검증
-fn verify_compatible(
-  pkg: ResolvedPackage,
-  dep: Dependency,
-  constraints_map: Dict(String, List(String)),
-) -> Result(Nil, ResolverError) {
-  case parse_constraint(dep) {
-    Ok(constraint) -> {
-      case semver.parse_version(pkg.version) {
-        Ok(version) ->
-          case semver.satisfies(version, constraint) {
-            True -> Ok(Nil)
-            False -> {
-              let key =
-                dep.name <> ":" <> types.registry_to_string(dep.registry)
-              let all_constraints = case dict.get(constraints_map, key) {
-                Ok(cs) -> cs
-                Error(_) -> [dep.version_constraint]
-              }
-              Error(IncompatibleVersions(
-                package: dep.name <> "@" <> pkg.version,
-                constraints: all_constraints,
-              ))
-            }
-          }
-        Error(_) -> Ok(Nil)
-      }
-    }
-    Error(_) -> Ok(Nil)
-  }
-}
-
-fn resolve_one(
-  dep: Dependency,
-  existing_lock: Result(KirLock, Nil),
-  exclude_newer: Result(String, Nil),
-  fetch: FetchVersions,
-) -> Result(#(ResolvedPackage, VersionInfo), ResolverError) {
-  // 레지스트리에서 가져오기
-  use versions <- result.try(fetch(dep.name, dep.registry))
-  // exclude-newer 필터
-  let versions = filter_by_cutoff(versions, exclude_newer)
-  // 기존 lock에서 찾기
-  case try_from_lock(dep, existing_lock) {
-    Ok(pkg) -> {
-      // lock hit — 해당 버전의 VersionInfo를 찾아 전이 의존성 반환
-      let vi =
-        list.find(versions, fn(v) { v.version == pkg.version })
-        |> result.unwrap(VersionInfo(
-          version: pkg.version,
-          published_at: "",
-          tarball_url: "",
-          dependencies: [],
-          peer_dependencies: [],
-          optional_dependencies: [],
-          os: [],
-          cpu: [],
-          has_scripts: False,
-          signatures: [],
-          integrity: "",
-          deprecated: "",
-          license: pkg.license,
-        ))
-      Ok(#(pkg, vi))
-    }
-    Error(_) -> {
-      // 제약 조건 파싱
-      use constraint <- result.try(parse_constraint(dep))
-      // 만족하는 버전 필터 + 플랫폼 필터 + 최고 버전 선택
-      let matching =
-        list.filter(versions, fn(vi) {
-          let version_ok = case semver.parse_version(vi.version) {
-            Ok(v) -> semver.satisfies(v, constraint)
-            Error(_) -> False
-          }
-          version_ok && matches_platform(vi, dep.registry)
-        })
-        |> list.sort(fn(a, b) {
+    list.filter_map(vi.peer_dependencies, fn(peer) {
+      let peer_key = peer.name <> ":" <> types.registry_to_string(peer.registry)
+      case dict.get(resolved, peer_key) {
+        Ok(installed) ->
           case
-            semver.parse_version(a.version),
-            semver.parse_version(b.version)
+            semver.parse_npm_constraint(peer.constraint),
+            semver.parse_version(installed.version)
           {
-            Ok(va), Ok(vb) -> semver.compare(vb, va)
-            _, _ -> string.compare(b.version, a.version)
+            Ok(constraint), Ok(version) ->
+              case semver.satisfies(version, constraint) {
+                True -> Error(Nil)
+                False ->
+                  Ok(PeerIncompatible(
+                    package: package_name,
+                    peer: peer.name,
+                    required: peer.constraint,
+                    installed: installed.version,
+                  ))
+              }
+            _, _ -> Error(Nil)
           }
-        })
-      case matching {
-        [best, ..] ->
-          Ok(#(
-            ResolvedPackage(
-              name: dep.name,
-              version: best.version,
-              registry: dep.registry,
-              sha256: "",
-              has_scripts: False,
-              platform: Error(Nil),
-              license: best.license,
-            ),
-            best,
-          ))
-        [] ->
-          Error(
-            IncompatibleVersions(package: dep.name, constraints: [
-              dep.version_constraint,
-            ]),
-          )
+        Error(_) ->
+          case peer.optional {
+            True -> Error(Nil)
+            False ->
+              Ok(PeerMissing(
+                package: package_name,
+                peer: peer.name,
+                constraint: peer.constraint,
+              ))
+          }
       }
-    }
-  }
-}
-
-fn try_from_lock(
-  dep: Dependency,
-  existing_lock: Result(KirLock, Nil),
-) -> Result(ResolvedPackage, Nil) {
-  use lock <- result.try(existing_lock)
-  use pkg <- result.try(
-    list.find(lock.packages, fn(p) {
-      p.name == dep.name && p.registry == dep.registry
-    }),
-  )
-  use constraint <- result.try(
-    parse_constraint(dep) |> result.replace_error(Nil),
-  )
-  use version <- result.try(
-    semver.parse_version(pkg.version) |> result.replace_error(Nil),
-  )
-  case semver.satisfies(version, constraint) {
-    True -> Ok(pkg)
-    False -> Error(Nil)
-  }
-}
-
-fn parse_constraint(dep: Dependency) -> Result(Constraint, ResolverError) {
-  case dep.registry {
-    Hex ->
-      semver.parse_hex_constraint(dep.version_constraint)
-      |> result.map_error(fn(e) {
-        IncompatibleVersions(package: dep.name, constraints: [
-          semver_error_to_string(e),
-        ])
-      })
-    Npm ->
-      semver.parse_npm_constraint(dep.version_constraint)
-      |> result.map_error(fn(e) {
-        IncompatibleVersions(package: dep.name, constraints: [
-          semver_error_to_string(e),
-        ])
-      })
-  }
-}
-
-fn semver_error_to_string(e: semver.SemverError) -> String {
-  case e {
-    semver.InvalidVersion(d) -> d
-    semver.InvalidConstraint(d) -> d
-  }
-}
-
-fn filter_by_cutoff(
-  versions: List(VersionInfo),
-  exclude_newer: Result(String, Nil),
-) -> List(VersionInfo) {
-  case exclude_newer {
-    Error(_) -> versions
-    Ok(cutoff) ->
-      list.filter(versions, fn(vi) {
-        case vi.published_at {
-          "" -> True
-          ts ->
-            case security.is_before_cutoff(ts, cutoff) {
-              Ok(True) -> True
-              _ -> False
-            }
-        }
-      })
-  }
+    })
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -499,79 +377,6 @@ fn fetch_release_deps_from_registries(
     }
     Npm -> Ok(#([], ""))
   }
-}
-
-/// 의존성이 비어있으면 개별 release API에서 조회하여 VersionInfo 갱신
-fn enrich_dependencies(
-  vi: VersionInfo,
-  name: String,
-  version: String,
-  registry: Registry,
-  fetch_deps: FetchReleaseDeps,
-) -> Result(VersionInfo, ResolverError) {
-  case vi.dependencies {
-    [] -> {
-      use #(deps, deprecated) <- result.try(fetch_deps(name, version, registry))
-      Ok(VersionInfo(..vi, dependencies: deps, deprecated: deprecated))
-    }
-    // 이미 의존성이 있으면 그대로 사용 (npm, 테스트 mock)
-    _ -> Ok(vi)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// peer dependency 검증 (post-resolution)
-// ---------------------------------------------------------------------------
-
-/// 해결 완료 후 모든 패키지의 peerDependencies가 만족되는지 검증
-fn verify_peer_dependencies(
-  resolved: Dict(String, ResolvedPackage),
-  version_cache: Dict(String, VersionInfo),
-) -> List(PeerWarning) {
-  dict.to_list(version_cache)
-  |> list.flat_map(fn(entry) {
-    let #(key, vi) = entry
-    // key에서 패키지명 추출 (name:registry 형식)
-    let package_name = case string.split_once(key, ":") {
-      Ok(#(name, _)) -> name
-      Error(_) -> key
-    }
-    list.filter_map(vi.peer_dependencies, fn(peer) {
-      let peer_key = peer.name <> ":" <> types.registry_to_string(peer.registry)
-      case dict.get(resolved, peer_key) {
-        Ok(installed) ->
-          // peer 패키지가 설치됨 → 버전 제약 조건 검증
-          case
-            semver.parse_npm_constraint(peer.constraint),
-            semver.parse_version(installed.version)
-          {
-            Ok(constraint), Ok(version) ->
-              case semver.satisfies(version, constraint) {
-                True -> Error(Nil)
-                False ->
-                  Ok(PeerIncompatible(
-                    package: package_name,
-                    peer: peer.name,
-                    required: peer.constraint,
-                    installed: installed.version,
-                  ))
-              }
-            _, _ -> Error(Nil)
-          }
-        Error(_) ->
-          // peer 패키지 미설치
-          case peer.optional {
-            True -> Error(Nil)
-            False ->
-              Ok(PeerMissing(
-                package: package_name,
-                peer: peer.name,
-                constraint: peer.constraint,
-              ))
-          }
-      }
-    })
-  })
 }
 
 fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) {
@@ -659,37 +464,6 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
       )
     }),
   )
-}
-
-// ---------------------------------------------------------------------------
-// 플랫폼 필터링
-// ---------------------------------------------------------------------------
-
-fn matches_platform(vi: VersionInfo, registry: Registry) -> Bool {
-  case registry {
-    Hex -> True
-    Npm ->
-      check_platform_list(vi.os, platform.get_platform_os())
-      && check_platform_list(vi.cpu, platform.get_platform_arch())
-  }
-}
-
-/// 빈 목록이면 모든 플랫폼 허용. "!" prefix는 제외 목록.
-fn check_platform_list(allowed: List(String), current: String) -> Bool {
-  case allowed {
-    [] -> True
-    _ -> {
-      let has_exclude = list.any(allowed, fn(s) { string.starts_with(s, "!") })
-      case has_exclude {
-        True ->
-          // 제외 목록: "!win32"이면 win32만 제외
-          !list.contains(allowed, "!" <> current)
-        False ->
-          // 포함 목록: 현재 플랫폼이 목록에 있어야 함
-          list.contains(allowed, current)
-      }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

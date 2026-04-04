@@ -328,10 +328,8 @@ pub fn resolve_incompatible_test() {
         optional: False,
       ),
     ])
-  let assert Error(resolver.IncompatibleVersions(
-    package: "gleam_stdlib",
-    constraints: _,
-  )) = resolver.resolve_with(config, Error(Nil), mock_fetch)
+  let assert Error(resolver.ResolutionConflict(_)) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
 }
 
 // ---------------------------------------------------------------------------
@@ -475,14 +473,12 @@ pub fn resolve_diamond_conflict_test() {
         optional: False,
       ),
     ])
-  let assert Error(resolver.IncompatibleVersions(package: pkg, constraints: cs)) =
+  let assert Error(resolver.ResolutionConflict(explanation)) =
     resolver.resolve_with(config, Error(Nil), mock_fetch)
-  // 에러에 패키지 이름과 충돌 제약 조건이 포함
-  assert {
-    let has_shared = string.contains(pkg, "pkg_shared")
-    has_shared
-  }
-  assert list.length(cs) >= 2
+  // 충돌 설명에 pkg_shared와 의존성 정보 포함
+  assert string.contains(explanation, "pkg_shared")
+  assert string.contains(explanation, "pkg_b")
+    || string.contains(explanation, "pkg_a")
 }
 
 pub fn resolve_diamond_compatible_test() {

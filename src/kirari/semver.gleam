@@ -12,6 +12,23 @@ pub type SemverError {
   InvalidConstraint(detail: String)
 }
 
+// ---------------------------------------------------------------------------
+// VersionRange — PubGrub solver용 정규화된 버전 범위 집합 대수
+// ---------------------------------------------------------------------------
+
+/// 정규화된 버전 범위 (PubGrub 내부 연산용)
+pub opaque type VersionRange {
+  Empty
+  Full
+  Interval(
+    min: Result(Version, Nil),
+    min_inclusive: Bool,
+    max: Result(Version, Nil),
+    max_inclusive: Bool,
+  )
+  Union(VersionRange, VersionRange)
+}
+
 /// 파싱된 시맨틱 버전 (opaque — parse_version으로만 생성)
 pub opaque type Version {
   Version(major: Int, minor: Int, patch: Int, pre: String)
@@ -554,5 +571,490 @@ fn normalize_hex_parts(
         _, _, _ -> original
       }
     _ -> original
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VersionRange 생성자
+// ---------------------------------------------------------------------------
+
+/// 빈 범위 (공집합)
+pub fn version_range_empty() -> VersionRange {
+  Empty
+}
+
+/// 전체 범위 (모든 버전)
+pub fn version_range_any() -> VersionRange {
+  Full
+}
+
+/// 단일 버전 범위
+pub fn version_range_exact(v: Version) -> VersionRange {
+  Interval(min: Ok(v), min_inclusive: True, max: Ok(v), max_inclusive: True)
+}
+
+/// Constraint를 VersionRange로 변환 (opaque 접근 필요)
+pub fn constraint_to_range(c: Constraint) -> VersionRange {
+  case c {
+    Any -> Full
+    Eq(v) -> version_range_exact(v)
+    Gt(v) ->
+      Interval(
+        min: Ok(v),
+        min_inclusive: False,
+        max: Error(Nil),
+        max_inclusive: False,
+      )
+    Gte(v) ->
+      Interval(
+        min: Ok(v),
+        min_inclusive: True,
+        max: Error(Nil),
+        max_inclusive: False,
+      )
+    Lt(v) ->
+      Interval(
+        min: Error(Nil),
+        min_inclusive: False,
+        max: Ok(v),
+        max_inclusive: False,
+      )
+    Lte(v) ->
+      Interval(
+        min: Error(Nil),
+        min_inclusive: False,
+        max: Ok(v),
+        max_inclusive: True,
+      )
+    And(a, b) -> range_intersect(constraint_to_range(a), constraint_to_range(b))
+    Or(a, b) -> range_union(constraint_to_range(a), constraint_to_range(b))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VersionRange 집합 연산
+// ---------------------------------------------------------------------------
+
+/// 범위가 공집합인지 판정
+pub fn range_is_empty(r: VersionRange) -> Bool {
+  case r {
+    Empty -> True
+    Full -> False
+    Interval(min:, min_inclusive:, max:, max_inclusive:) ->
+      case min, max {
+        Ok(lo), Ok(hi) ->
+          case compare(lo, hi) {
+            order.Gt -> True
+            order.Eq -> !{ min_inclusive && max_inclusive }
+            order.Lt -> False
+          }
+        _, _ -> False
+      }
+    Union(a, b) -> range_is_empty(a) && range_is_empty(b)
+  }
+}
+
+/// 버전이 범위에 포함되는지 판정
+pub fn range_allows_version(r: VersionRange, v: Version) -> Bool {
+  case r {
+    Empty -> False
+    Full -> True
+    Interval(min:, min_inclusive:, max:, max_inclusive:) -> {
+      let above_min = case min {
+        Error(_) -> True
+        Ok(lo) ->
+          case compare(v, lo) {
+            order.Gt -> True
+            order.Eq -> min_inclusive
+            order.Lt -> False
+          }
+      }
+      let below_max = case max {
+        Error(_) -> True
+        Ok(hi) ->
+          case compare(v, hi) {
+            order.Lt -> True
+            order.Eq -> max_inclusive
+            order.Gt -> False
+          }
+      }
+      above_min && below_max
+    }
+    Union(a, b) -> range_allows_version(a, v) || range_allows_version(b, v)
+  }
+}
+
+/// 두 범위의 교집합
+pub fn range_intersect(a: VersionRange, b: VersionRange) -> VersionRange {
+  case a, b {
+    Empty, _ | _, Empty -> Empty
+    Full, x | x, Full -> x
+    Union(a1, a2), _ ->
+      range_union(range_intersect(a1, b), range_intersect(a2, b))
+    _, Union(b1, b2) ->
+      range_union(range_intersect(a, b1), range_intersect(a, b2))
+    Interval(
+      min: a_min,
+      min_inclusive: a_min_inc,
+      max: a_max,
+      max_inclusive: a_max_inc,
+    ),
+      Interval(
+        min: b_min,
+        min_inclusive: b_min_inc,
+        max: b_max,
+        max_inclusive: b_max_inc,
+      )
+    -> {
+      let #(new_min, new_min_inc) =
+        pick_higher_bound(a_min, a_min_inc, b_min, b_min_inc)
+      let #(new_max, new_max_inc) =
+        pick_lower_bound(a_max, a_max_inc, b_max, b_max_inc)
+      let result =
+        Interval(
+          min: new_min,
+          min_inclusive: new_min_inc,
+          max: new_max,
+          max_inclusive: new_max_inc,
+        )
+      case range_is_empty(result) {
+        True -> Empty
+        False -> result
+      }
+    }
+  }
+}
+
+/// 두 범위의 합집합
+pub fn range_union(a: VersionRange, b: VersionRange) -> VersionRange {
+  case a, b {
+    Empty, x | x, Empty -> x
+    Full, _ | _, Full -> Full
+    _, _ -> {
+      // 두 구간이 인접하거나 겹치면 병합, 아니면 Union
+      case try_merge_intervals(a, b) {
+        Ok(merged) -> merged
+        Error(_) -> Union(a, b)
+      }
+    }
+  }
+}
+
+/// 여집합: ¬R
+pub fn range_complement(r: VersionRange) -> VersionRange {
+  case r {
+    Empty -> Full
+    Full -> Empty
+    Interval(min:, min_inclusive:, max:, max_inclusive:) -> {
+      let lower = case min {
+        Error(_) -> Empty
+        Ok(v) ->
+          case min_inclusive {
+            True ->
+              Interval(
+                min: Error(Nil),
+                min_inclusive: False,
+                max: Ok(v),
+                max_inclusive: False,
+              )
+            False ->
+              Interval(
+                min: Error(Nil),
+                min_inclusive: False,
+                max: Ok(v),
+                max_inclusive: True,
+              )
+          }
+      }
+      let upper = case max {
+        Error(_) -> Empty
+        Ok(v) ->
+          case max_inclusive {
+            True ->
+              Interval(
+                min: Ok(v),
+                min_inclusive: False,
+                max: Error(Nil),
+                max_inclusive: False,
+              )
+            False ->
+              Interval(
+                min: Ok(v),
+                min_inclusive: True,
+                max: Error(Nil),
+                max_inclusive: False,
+              )
+          }
+      }
+      range_union(lower, upper)
+    }
+    Union(a, b) -> range_intersect(range_complement(a), range_complement(b))
+  }
+}
+
+/// a ⊆ b 판정 (complement 없이 직접 비교)
+pub fn range_subset(a: VersionRange, b: VersionRange) -> Bool {
+  case a, b {
+    Empty, _ -> True
+    _, Full -> True
+    Full, _ -> False
+    _, Empty -> False
+    Union(a1, a2), _ -> range_subset(a1, b) && range_subset(a2, b)
+    Interval(
+      min: a_min,
+      min_inclusive: a_min_inc,
+      max: a_max,
+      max_inclusive: a_max_inc,
+    ),
+      Interval(
+        min: b_min,
+        min_inclusive: b_min_inc,
+        max: b_max,
+        max_inclusive: b_max_inc,
+      )
+    -> {
+      // a의 하한이 b의 하한 이상이고 a의 상한이 b의 상한 이하
+      let min_ok = case b_min, a_min {
+        Error(_), _ -> True
+        _, Error(_) -> False
+        Ok(bv), Ok(av) ->
+          case compare(av, bv) {
+            order.Gt -> True
+            order.Lt -> False
+            order.Eq ->
+              // b가 inclusive면 a도 OK, b가 exclusive면 a도 exclusive여야 함
+              b_min_inc || !a_min_inc
+          }
+      }
+      let max_ok = case b_max, a_max {
+        Error(_), _ -> True
+        _, Error(_) -> False
+        Ok(bv), Ok(av) ->
+          case compare(av, bv) {
+            order.Lt -> True
+            order.Gt -> False
+            order.Eq -> b_max_inc || !a_max_inc
+          }
+      }
+      min_ok && max_ok
+    }
+    Interval(..), Union(b1, b2) -> {
+      // a ⊆ b1 ∪ b2: a에서 b1에 속하는 부분을 빼고 나머지가 b2에 속하는지 확인
+      let remainder = range_minus(a, b1)
+      range_subset(remainder, b2)
+    }
+  }
+}
+
+/// a에서 b를 ��는 차집합 (complement 없이 직접 계산)
+pub fn range_minus(a: VersionRange, b: VersionRange) -> VersionRange {
+  case a, b {
+    Empty, _ | _, Full -> Empty
+    _, Empty -> a
+    Full, _ -> range_intersect(a, range_complement(b))
+    Union(a1, a2), _ -> range_union(range_minus(a1, b), range_minus(a2, b))
+    Interval(
+      min: a_min,
+      min_inclusive: a_min_inc,
+      max: a_max,
+      max_inclusive: a_max_inc,
+    ),
+      Interval(
+        min: b_min,
+        min_inclusive: b_min_inc,
+        max: b_max,
+        max_inclusive: b_max_inc,
+      )
+    -> {
+      // a \ b = a ∩ ¬b
+      // ¬b = (-∞, b_min) ∪ (b_max, +∞) (inclusivity 반전)
+      let left_part = case b_min {
+        Error(_) -> Empty
+        Ok(bv) -> {
+          let left_max_inc = !b_min_inc
+          let left =
+            Interval(
+              min: a_min,
+              min_inclusive: a_min_inc,
+              max: Ok(bv),
+              max_inclusive: left_max_inc,
+            )
+          case range_is_empty(left) {
+            True -> Empty
+            False -> left
+          }
+        }
+      }
+      let right_part = case b_max {
+        Error(_) -> Empty
+        Ok(bv) -> {
+          let right_min_inc = !b_max_inc
+          let right =
+            Interval(
+              min: Ok(bv),
+              min_inclusive: right_min_inc,
+              max: a_max,
+              max_inclusive: a_max_inc,
+            )
+          case range_is_empty(right) {
+            True -> Empty
+            False -> right
+          }
+        }
+      }
+      range_union(left_part, right_part)
+    }
+    _, Union(b1, b2) -> {
+      // a \ (b1 ∪ b2) = (a \ b1) \ b2
+      range_minus(range_minus(a, b1), b2)
+    }
+  }
+}
+
+/// VersionRange를 사람이 읽을 수 있는 문자열로 변환
+pub fn range_to_string(r: VersionRange) -> String {
+  case r {
+    Empty -> "∅"
+    Full -> "*"
+    Interval(min:, min_inclusive:, max:, max_inclusive:) ->
+      interval_to_string(min, min_inclusive, max, max_inclusive)
+    Union(a, b) -> range_to_string(a) <> " || " <> range_to_string(b)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VersionRange 내부 헬퍼
+// ---------------------------------------------------------------------------
+
+fn interval_to_string(
+  min: Result(Version, Nil),
+  min_inclusive: Bool,
+  max: Result(Version, Nil),
+  max_inclusive: Bool,
+) -> String {
+  case min, max {
+    Ok(lo), Ok(hi) if lo == hi && min_inclusive && max_inclusive ->
+      to_string(lo)
+    Ok(lo), Ok(hi) -> {
+      let lo_str = case min_inclusive {
+        True -> ">=" <> to_string(lo)
+        False -> ">" <> to_string(lo)
+      }
+      let hi_str = case max_inclusive {
+        True -> "<=" <> to_string(hi)
+        False -> "<" <> to_string(hi)
+      }
+      lo_str <> " " <> hi_str
+    }
+    Error(_), Ok(hi) ->
+      case max_inclusive {
+        True -> "<=" <> to_string(hi)
+        False -> "<" <> to_string(hi)
+      }
+    Ok(lo), Error(_) ->
+      case min_inclusive {
+        True -> ">=" <> to_string(lo)
+        False -> ">" <> to_string(lo)
+      }
+    Error(_), Error(_) -> "*"
+  }
+}
+
+/// 두 하한 중 더 높은 쪽 선택 (교집합용)
+fn pick_higher_bound(
+  a: Result(Version, Nil),
+  a_inc: Bool,
+  b: Result(Version, Nil),
+  b_inc: Bool,
+) -> #(Result(Version, Nil), Bool) {
+  case a, b {
+    Error(_), _ -> #(b, b_inc)
+    _, Error(_) -> #(a, a_inc)
+    Ok(va), Ok(vb) ->
+      case compare(va, vb) {
+        order.Gt -> #(a, a_inc)
+        order.Lt -> #(b, b_inc)
+        order.Eq -> #(a, a_inc && b_inc)
+      }
+  }
+}
+
+/// 두 상한 중 더 낮은 쪽 선택 (교집합용)
+fn pick_lower_bound(
+  a: Result(Version, Nil),
+  a_inc: Bool,
+  b: Result(Version, Nil),
+  b_inc: Bool,
+) -> #(Result(Version, Nil), Bool) {
+  case a, b {
+    Error(_), _ -> #(b, b_inc)
+    _, Error(_) -> #(a, a_inc)
+    Ok(va), Ok(vb) ->
+      case compare(va, vb) {
+        order.Lt -> #(a, a_inc)
+        order.Gt -> #(b, b_inc)
+        order.Eq -> #(a, a_inc && b_inc)
+      }
+  }
+}
+
+/// 두 구간이 인접하거나 겹치면 병합
+fn try_merge_intervals(
+  a: VersionRange,
+  b: VersionRange,
+) -> Result(VersionRange, Nil) {
+  case a, b {
+    Interval(
+      min: a_min,
+      min_inclusive: a_min_inc,
+      max: a_max,
+      max_inclusive: a_max_inc,
+    ),
+      Interval(
+        min: b_min,
+        min_inclusive: b_min_inc,
+        max: b_max,
+        max_inclusive: b_max_inc,
+      )
+    -> {
+      // 겹치거나 인접한지 확인: a의 상한이 b의 하한 이상이고 b의 상한이 a의 하한 이상
+      case
+        intervals_overlap_or_adjacent(a_max, a_max_inc, b_min, b_min_inc)
+        && intervals_overlap_or_adjacent(b_max, b_max_inc, a_min, a_min_inc)
+      {
+        True -> {
+          let #(new_min, new_min_inc) =
+            pick_lower_bound(a_min, a_min_inc, b_min, b_min_inc)
+          let #(new_max, new_max_inc) =
+            pick_higher_bound(a_max, a_max_inc, b_max, b_max_inc)
+          Ok(Interval(
+            min: new_min,
+            min_inclusive: new_min_inc,
+            max: new_max,
+            max_inclusive: new_max_inc,
+          ))
+        }
+        False -> Error(Nil)
+      }
+    }
+    _, _ -> Error(Nil)
+  }
+}
+
+/// 상한 bound가 하한 bound 이상인지 (겹침/인접 판정)
+fn intervals_overlap_or_adjacent(
+  upper: Result(Version, Nil),
+  upper_inc: Bool,
+  lower: Result(Version, Nil),
+  lower_inc: Bool,
+) -> Bool {
+  case upper, lower {
+    Error(_), _ | _, Error(_) -> True
+    Ok(u), Ok(l) ->
+      case compare(u, l) {
+        order.Gt -> True
+        order.Eq -> upper_inc || lower_inc
+        order.Lt -> False
+      }
   }
 }

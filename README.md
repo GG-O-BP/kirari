@@ -21,6 +21,7 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Vulnerability audit** — `kir audit` checks installed packages against GitHub Advisory Database (Hex/Erlang) and npm bulk advisory API, with severity filtering, `--json` output for CI, and configurable ignore list
 - **Deprecation warnings** — Hex retired and npm deprecated packages are flagged during install
 - **Duplicate declaration warning** — detects packages declared in both `[dependencies]` and `[dev-dependencies]`
+- **PubGrub dependency resolution** — backtracking solver with learned clauses, human-readable conflict explanation ("Because X depends on Y..."), lock preference, exclude-newer filtering
 - **SemVer 2.0.0 compliant** — pre-release identifier sorting, build metadata parsing (`+build` ignored in comparison), single-digit version padding (`"1"` → `1.0.0`)
 - **Deterministic lockfile metadata** — `kir.lock` includes generation timestamp and kirari version for auditability
 - **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
@@ -294,7 +295,7 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Lockfile** | `manifest.toml` | `kir.lock` |
 | **Lockfile hash** | `outer_checksum` (SHA256, from Hex registry) | `sha256` (SHA256, computed locally) |
 | **npm dependency management** | Not managed; requires separate `package.json` and npm/yarn/pnpm | Native; declared in `gleam.toml [npm-dependencies]`, resolved alongside Hex |
-| **Dependency resolution** | PubGrub (backtracking) | Greedy (highest compatible, no backtracking, diamond conflict detection) |
+| **Dependency resolution** | PubGrub (backtracking) | PubGrub (backtracking, learned clauses, human-readable conflict explanation) |
 | **Local package store** | Global tarball cache + extracts to `build/packages/` per project | Content-addressable `~/.kir/store/` shared across projects, registry-separated (`hex/`, `npm/`) |
 | **Installation method** | Extract from tarball | Hardlink (immutable packages) or copy (npm with scripts) |
 | **npm bin executables** | Not managed | Auto-creates `node_modules/.bin/` symlinks (Unix) or `.cmd` wrappers (Windows) |
@@ -343,7 +344,12 @@ src/kirari/
   audit/
     ghsa.gleam            GitHub Advisory Database REST API client (Erlang ecosystem, cached)
     npm_audit.gleam       npm bulk advisory POST API client
-  resolver.gleam          Dependency resolution with transitive deps + diamond conflict detection
+  resolver.gleam          Dependency resolution facade (public API, registry fetch, peer validation)
+  resolver/
+    pubgrub.gleam         PubGrub solver (unit propagation, decision making, conflict resolution)
+    term.gleam            Term type (positive/negative version range assertions)
+    incompatibility.gleam Incompatibility type, cause tracking, human-readable explanation
+    partial_solution.gleam Assignment tracking, decision levels, backtracking
   lockfile.gleam          kir.lock read/write + structured diff
   pipeline.gleam          Download → verify → store → install orchestration
   security.gleam          SHA256, path validation, exclude-newer, SRI integrity, Sigstore ECDSA

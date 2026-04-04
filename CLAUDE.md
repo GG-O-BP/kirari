@@ -72,6 +72,13 @@ cli 서브모듈 (책임별 분리):
 - cli/install.gleam — 워크플로우 커맨드 (init, install, update, add, remove, clean, publish)
 - cli/query.gleam — 조회 커맨드 (outdated, why, diff, ls, doctor, store verify, license)
 
+resolver 서브모듈 (PubGrub 알고리즘):
+- resolver.gleam — facade (공개 API, 레지스트리 조회, peer 검증)
+- resolver/pubgrub.gleam — PubGrub solver 메인 루프 (unit propagation, decision, conflict resolution)
+- resolver/term.gleam — Term, PackageRef, Relation 타입
+- resolver/incompatibility.gleam — Incompatibility, 원인 추적, 충돌 설명 생성
+- resolver/partial_solution.gleam — PartialSolution (할당, 결정 레벨, 백트래킹)
+
 store 모듈 (레지스트리별 분리):
 - store.gleam — 라우터 (hex/npm 위임, 타입 re-export)
 - store/types.gleam — StoreError, StoreResult 공유 타입
