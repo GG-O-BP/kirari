@@ -95,6 +95,32 @@ pub fn print_pipeline_warnings(warnings: List(pipeline.Warning)) -> Nil {
           <> "/"
           <> arch,
         )
+      pipeline.PeerDependencyMissing(package, peer, constraint) ->
+        io.println(
+          color_yellow("\u{26a0}")
+          <> " "
+          <> package
+          <> " requires peer dependency "
+          <> peer
+          <> " "
+          <> constraint
+          <> " but it is not installed",
+        )
+      pipeline.PeerDependencyIncompatible(package, peer, required, installed) ->
+        io.println(
+          color_yellow("\u{26a0}")
+          <> " "
+          <> package
+          <> " requires peer "
+          <> peer
+          <> " "
+          <> required
+          <> " but "
+          <> installed
+          <> " is installed",
+        )
+      pipeline.OptionalSkipped(name, reason) ->
+        io.println(color_dim("  skipped optional " <> name <> ": " <> reason))
     }
   })
 }

@@ -26,6 +26,8 @@ fn mock_fetch(
           version: "0.44.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -39,6 +41,8 @@ fn mock_fetch(
           version: "0.45.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -52,6 +56,8 @@ fn mock_fetch(
           version: "1.0.0",
           published_at: "2025-01-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -73,8 +79,11 @@ fn mock_fetch(
               version_constraint: ">= 0.44.0 and < 2.0.0",
               registry: Hex,
               dev: False,
+              optional: False,
             ),
           ],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -91,6 +100,8 @@ fn mock_fetch(
           version: "11.0.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -104,6 +115,8 @@ fn mock_fetch(
           version: "11.9.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -117,6 +130,8 @@ fn mock_fetch(
           version: "12.0.0",
           published_at: "2025-01-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -139,8 +154,11 @@ fn mock_fetch(
               version_constraint: ">= 1.0.0 and < 2.0.0",
               registry: Hex,
               dev: False,
+              optional: False,
             ),
           ],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -162,8 +180,11 @@ fn mock_fetch(
               version_constraint: ">= 2.0.0",
               registry: Hex,
               dev: False,
+              optional: False,
             ),
           ],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -180,6 +201,8 @@ fn mock_fetch(
           version: "1.0.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -193,6 +216,8 @@ fn mock_fetch(
           version: "2.0.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -238,6 +263,7 @@ pub fn resolve_simple_hex_test() {
         version_constraint: ">= 0.44.0 and < 2.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Ok(resolved) =
@@ -257,6 +283,7 @@ pub fn resolve_simple_npm_test() {
         version_constraint: "^11.0.0",
         registry: Npm,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Ok(resolved) =
@@ -279,6 +306,7 @@ pub fn resolve_not_found_test() {
         version_constraint: "^1.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Error(resolver.PackageNotFound("nonexistent", Hex)) =
@@ -297,6 +325,7 @@ pub fn resolve_incompatible_test() {
         version_constraint: ">= 99.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Error(resolver.IncompatibleVersions(
@@ -317,6 +346,7 @@ pub fn resolve_prefers_lock_test() {
         version_constraint: ">= 0.44.0 and < 2.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let lock =
@@ -350,6 +380,7 @@ pub fn resolve_exclude_newer_test() {
           version_constraint: ">= 0.44.0 and < 2.0.0",
           registry: Hex,
           dev: False,
+          optional: False,
         ),
       ]),
       security: types.SecurityConfig(
@@ -376,12 +407,14 @@ pub fn resolve_mixed_registries_test() {
         version_constraint: ">= 0.44.0 and < 2.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
       Dependency(
         name: "highlight.js",
         version_constraint: "^11.0.0",
         registry: Npm,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Ok(resolved) =
@@ -402,6 +435,7 @@ pub fn resolve_transitive_deps_test() {
         version_constraint: ">= 3.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Ok(resolved) =
@@ -431,12 +465,14 @@ pub fn resolve_diamond_conflict_test() {
         version_constraint: ">= 1.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
       Dependency(
         name: "pkg_b",
         version_constraint: ">= 1.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Error(resolver.IncompatibleVersions(package: pkg, constraints: cs)) =
@@ -459,12 +495,14 @@ pub fn resolve_diamond_compatible_test() {
         version_constraint: ">= 0.44.0 and < 2.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
       Dependency(
         name: "gleam_json",
         version_constraint: ">= 3.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ])
   let assert Ok(resolved) =

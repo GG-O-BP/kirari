@@ -27,6 +27,8 @@ pub type NpmPackageVersion {
     published_at: String,
     tarball_url: String,
     dependencies: List(NpmDependency),
+    peer_dependencies: List(NpmPeerDependency),
+    optional_dependencies: List(NpmDependency),
     os: List(String),
     cpu: List(String),
     has_scripts: Bool,
@@ -40,6 +42,11 @@ pub type NpmPackageVersion {
 /// npm 의존성 항목
 pub type NpmDependency {
   NpmDependency(name: String, constraint: String)
+}
+
+/// npm peer 의존성 항목 (peerDependenciesMeta의 optional 정보 포함)
+pub type NpmPeerDependency {
+  NpmPeerDependency(name: String, constraint: String, optional: Bool)
 }
 
 /// npm 레지스트리 서명 (Sigstore)
@@ -147,6 +154,8 @@ pub fn parse_versions_response(
         published_at: published_at,
         tarball_url: v.tarball_url,
         dependencies: v.deps,
+        peer_dependencies: v.peer_deps,
+        optional_dependencies: v.optional_deps,
         os: v.os,
         cpu: v.cpu,
         has_scripts: v.has_scripts,
@@ -166,6 +175,8 @@ type VersionValue {
   VersionValue(
     tarball_url: String,
     deps: List(NpmDependency),
+    peer_deps: List(NpmPeerDependency),
+    optional_deps: List(NpmDependency),
     os: List(String),
     cpu: List(String),
     has_scripts: Bool,
@@ -187,6 +198,21 @@ fn version_value_decoder() -> decode.Decoder(VersionValue) {
     dict.new(),
     decode.dict(decode.string, decode.string),
   )
+  use peer_deps_raw <- decode.optional_field(
+    "peerDependencies",
+    dict.new(),
+    decode.dict(decode.string, decode.string),
+  )
+  use peer_meta_raw <- decode.optional_field(
+    "peerDependenciesMeta",
+    dict.new(),
+    decode.dict(decode.string, peer_meta_decoder()),
+  )
+  use optional_deps_raw <- decode.optional_field(
+    "optionalDependencies",
+    dict.new(),
+    decode.dict(decode.string, decode.string),
+  )
   use os <- decode.optional_field("os", [], decode.list(decode.string))
   use cpu <- decode.optional_field("cpu", [], decode.list(decode.string))
   use scripts <- decode.optional_field(
@@ -196,8 +222,35 @@ fn version_value_decoder() -> decode.Decoder(VersionValue) {
   )
   use deprecated <- decode.optional_field("deprecated", "", decode.string)
   use license <- decode.optional_field("license", "", decode.string)
+  // optionalDependencies에 있는 이름은 dependencies에서 제거 (npm 사양)
+  let optional_names = dict.keys(optional_deps_raw)
   let dep_list =
     dict.to_list(deps)
+    |> list.filter(fn(entry) { !list.contains(optional_names, entry.0) })
+    |> list.map(fn(entry) {
+      let #(name, constraint) = entry
+      NpmDependency(name: name, constraint: constraint)
+    })
+    |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+  // peerDependencies + peerDependenciesMeta 합치기
+  let peer_list =
+    dict.to_list(peer_deps_raw)
+    |> list.map(fn(entry) {
+      let #(name, constraint) = entry
+      let is_optional = case dict.get(peer_meta_raw, name) {
+        Ok(opt) -> opt
+        Error(_) -> False
+      }
+      NpmPeerDependency(
+        name: name,
+        constraint: constraint,
+        optional: is_optional,
+      )
+    })
+    |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+  // optionalDependencies
+  let optional_list =
+    dict.to_list(optional_deps_raw)
     |> list.map(fn(entry) {
       let #(name, constraint) = entry
       NpmDependency(name: name, constraint: constraint)
@@ -206,6 +259,8 @@ fn version_value_decoder() -> decode.Decoder(VersionValue) {
   decode.success(VersionValue(
     tarball_url: tarball_url,
     deps: dep_list,
+    peer_deps: peer_list,
+    optional_deps: optional_list,
     os: os,
     cpu: cpu,
     has_scripts: dict.size(scripts) > 0,
@@ -214,6 +269,12 @@ fn version_value_decoder() -> decode.Decoder(VersionValue) {
     deprecated: deprecated,
     license: license,
   ))
+}
+
+/// peerDependenciesMeta 항목 디코더: {"optional": true} → Bool
+fn peer_meta_decoder() -> decode.Decoder(Bool) {
+  use optional <- decode.optional_field("optional", False, decode.bool)
+  decode.success(optional)
 }
 
 fn dist_decoder() -> decode.Decoder(#(String, List(NpmSignature), String)) {

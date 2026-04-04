@@ -35,6 +35,7 @@ pub fn find_undeclared_filters_declared_test() {
           version_constraint: "^4.0.0",
           registry: Npm,
           dev: False,
+          optional: False,
         ),
       ],
       npm_dev_deps: [],

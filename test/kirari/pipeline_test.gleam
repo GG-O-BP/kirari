@@ -32,7 +32,8 @@ pub fn run_skips_cached_packages_test() {
       platform: Error(Nil),
       license: "",
     )
-  let resolve_result = ResolveResult(packages: [pkg], version_infos: dict.new())
+  let resolve_result =
+    ResolveResult(packages: [pkg], version_infos: dict.new(), peer_warnings: [])
   let security = types.default_security_config()
   // pipeline.run은 이미 store에 있으므로 다운로드 없이 성공
   let assert Ok(result) =
@@ -49,7 +50,8 @@ pub fn run_skips_cached_packages_test() {
 // ---------------------------------------------------------------------------
 
 pub fn run_empty_packages_test() {
-  let resolve_result = ResolveResult(packages: [], version_infos: dict.new())
+  let resolve_result =
+    ResolveResult(packages: [], version_infos: dict.new(), peer_warnings: [])
   let security = types.default_security_config()
   let assert Ok(result) =
     pipeline.run(resolve_result, test_project_dir(), security)

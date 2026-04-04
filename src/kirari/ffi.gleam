@@ -56,7 +56,13 @@ pub fn to_dependencies(detections: List(FfiDetection)) -> List(Dependency) {
   |> list.map(fn(d) { d.package_name })
   |> list.unique
   |> list.map(fn(name) {
-    Dependency(name: name, version_constraint: "*", registry: Npm, dev: False)
+    Dependency(
+      name: name,
+      version_constraint: "*",
+      registry: Npm,
+      dev: False,
+      optional: False,
+    )
   })
 }
 

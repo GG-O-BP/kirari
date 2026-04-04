@@ -118,6 +118,7 @@ fn decode_gleam_deps(
               version_constraint: constraint,
               registry: Hex,
               dev: dev,
+              optional: False,
             ))
           _ -> Error(Nil)
         }
@@ -200,6 +201,7 @@ pub fn parse_package_json(
         version_constraint: constraint,
         registry: Npm,
         dev: False,
+        optional: False,
       )
     })
   let npm_dev_deps =
@@ -211,6 +213,7 @@ pub fn parse_package_json(
         version_constraint: constraint,
         registry: Npm,
         dev: True,
+        optional: False,
       )
     })
 

@@ -28,6 +28,14 @@ pub type Warning {
   ScriptBlocked(name: String, version: String)
   Deprecated(name: String, version: String, reason: String)
   PlatformMismatch(name: String, version: String, os: String, arch: String)
+  PeerDependencyMissing(package: String, peer: String, constraint: String)
+  PeerDependencyIncompatible(
+    package: String,
+    peer: String,
+    required: String,
+    installed: String,
+  )
+  OptionalSkipped(name: String, reason: String)
 }
 
 /// pipeline 실행 결과
@@ -70,15 +78,34 @@ pub fn run(
         bins -> Ok(#(dr.package.name, bins))
       }
     })
-  // 2. 스크립트 정책 경고 + deprecated/retired 경고 수집
+  // 2. 스크립트 정책 경고 + deprecated/retired 경고 + peer 경고 수집
+  let peer_warnings =
+    list.map(resolve_result.peer_warnings, fn(pw) {
+      case pw {
+        resolver.PeerMissing(package, peer, constraint) ->
+          PeerDependencyMissing(
+            package: package,
+            peer: peer,
+            constraint: constraint,
+          )
+        resolver.PeerIncompatible(package, peer, required, installed) ->
+          PeerDependencyIncompatible(
+            package: package,
+            peer: peer,
+            required: required,
+            installed: installed,
+          )
+      }
+    })
   let warnings =
-    list.append(
+    list.flatten([
       collect_script_warnings(updated, security),
       collect_deprecation_warnings(updated, ctx),
-    )
-  // 3. 프로젝트에 설치
+      peer_warnings,
+    ])
+  // 3. 원자적 설치 (staging → swap, 실패 시 롤백)
   use install_warnings <- result.try(
-    installer.install_all(updated, project_dir)
+    installer.install_atomic(updated, bin_map, project_dir)
     |> result.map_error(InstallErr),
   )
   let warnings =
@@ -91,16 +118,6 @@ pub fn run(
         }
       }),
     )
-  // 4. bin 심볼릭 링크
-  use _ <- result.try(
-    installer.link_bins(bin_map, project_dir)
-    |> result.map_error(InstallErr),
-  )
-  // 5. 불필요한 패키지 정리
-  use _ <- result.try(
-    installer.clean_stale(updated, project_dir)
-    |> result.map_error(InstallErr),
-  )
   Ok(PipelineResult(packages: updated, bin_map: bin_map, warnings: warnings))
 }
 

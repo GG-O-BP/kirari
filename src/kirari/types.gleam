@@ -41,6 +41,7 @@ pub type Dependency {
     version_constraint: String,
     registry: Registry,
     dev: Bool,
+    optional: Bool,
   )
 }
 

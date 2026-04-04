@@ -25,6 +25,7 @@ fn sample_config() -> KirConfig {
         version_constraint: ">= 0.44.0 and < 2.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ],
     hex_dev_deps: [
@@ -33,6 +34,7 @@ fn sample_config() -> KirConfig {
         version_constraint: ">= 1.0.0",
         registry: Hex,
         dev: True,
+        optional: False,
       ),
     ],
     npm_deps: [
@@ -41,6 +43,7 @@ fn sample_config() -> KirConfig {
         version_constraint: "^11.0.0",
         registry: Npm,
         dev: False,
+        optional: False,
       ),
     ],
     npm_dev_deps: [],

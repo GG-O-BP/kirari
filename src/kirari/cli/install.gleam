@@ -19,6 +19,7 @@ import kirari/lockfile
 import kirari/migrate
 import kirari/pipeline
 import kirari/resolver
+import kirari/sbom
 import kirari/semver
 import kirari/store
 import kirari/store/gc
@@ -363,6 +364,7 @@ pub fn do_add(
       version_constraint: version_constraint,
       registry: registry,
       dev: is_dev,
+      optional: False,
     )
   let updated = config.add_dependency(cfg, dep)
   use _ <- result.try(
@@ -457,6 +459,49 @@ pub fn do_export(dir: String) -> Result(Nil, KirError) {
   )
   list.each(paths, fn(p) { io.println("Wrote " <> p) })
   Ok(Nil)
+}
+
+pub fn do_export_sbom(
+  dir: String,
+  format: sbom.SbomFormat,
+  output_path: String,
+) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  use lock <- result.try(
+    lockfile.read(dir)
+    |> result.map_error(LockErr),
+  )
+  let version_infos = case resolver.resolve_full(cfg, Ok(lock)) {
+    Ok(resolve_result) -> resolve_result.version_infos
+    Error(_) -> dict.new()
+  }
+  use json_str <- result.try(
+    sbom.generate(cfg, lock, version_infos, format)
+    |> result.map_error(fn(e) {
+      case e {
+        sbom.MissingLockfile -> UserError("lockfile not found")
+        sbom.MissingConfig -> UserError("config not found")
+        sbom.SerializationError(d) -> UserError("sbom error: " <> d)
+      }
+    }),
+  )
+  case output_path {
+    "" -> {
+      io.println(json_str)
+      Ok(Nil)
+    }
+    path ->
+      case simplifile.write(path, json_str) {
+        Ok(_) -> {
+          io.println("Wrote " <> path)
+          Ok(Nil)
+        }
+        Error(e) -> Error(UserError(simplifile.describe_error(e)))
+      }
+  }
 }
 
 pub fn do_deps_list(dir: String) -> Result(Nil, KirError) {

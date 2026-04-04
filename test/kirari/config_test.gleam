@@ -26,6 +26,7 @@ fn sample_config() -> KirConfig {
         version_constraint: ">= 0.44.0 and < 2.0.0",
         registry: Hex,
         dev: False,
+        optional: False,
       ),
     ],
     hex_dev_deps: [
@@ -34,6 +35,7 @@ fn sample_config() -> KirConfig {
         version_constraint: ">= 1.0.0 and < 2.0.0",
         registry: Hex,
         dev: True,
+        optional: False,
       ),
     ],
     npm_deps: [
@@ -42,6 +44,7 @@ fn sample_config() -> KirConfig {
         version_constraint: "^11.0.0",
         registry: Npm,
         dev: False,
+        optional: False,
       ),
     ],
     npm_dev_deps: [],
@@ -135,6 +138,7 @@ pub fn add_dependency_test() {
       version_constraint: ">= 3.0.0",
       registry: Hex,
       dev: False,
+      optional: False,
     )
   let updated = config.add_dependency(cfg, dep)
   assert list.length(updated.hex_deps) == 1
@@ -149,6 +153,7 @@ pub fn add_dependency_upsert_test() {
       version_constraint: "1.0.0",
       registry: Hex,
       dev: False,
+      optional: False,
     )
   let dep_v2 =
     Dependency(
@@ -156,6 +161,7 @@ pub fn add_dependency_upsert_test() {
       version_constraint: "2.0.0",
       registry: Hex,
       dev: False,
+      optional: False,
     )
   let cfg =
     KirConfig(
@@ -188,6 +194,7 @@ pub fn remove_dependency_test() {
       version_constraint: "1.0.0",
       registry: Npm,
       dev: False,
+      optional: False,
     )
   let cfg =
     KirConfig(

@@ -276,11 +276,95 @@ fn parse_npm_or(s: String) -> Result(Constraint, SemverError) {
 }
 
 fn parse_npm_range(s: String) -> Result(Constraint, SemverError) {
-  // 공백으로 구분된 여러 비교를 AND로 결합
-  let parts =
-    string.split(s, " ")
-    |> list.filter(fn(p) { string.trim(p) != "" })
-  parse_npm_parts(parts)
+  // 하이픈 범위 감지: "1.2.3 - 2.3.4" (공백-하이픈-공백)
+  case detect_hyphen_range(s) {
+    Ok(#(low, high)) -> parse_hyphen_range(low, high)
+    Error(_) -> {
+      // 공백으로 구분된 여러 비교를 AND로 결합
+      let parts =
+        string.split(s, " ")
+        |> list.filter(fn(p) { string.trim(p) != "" })
+      parse_npm_parts(parts)
+    }
+  }
+}
+
+/// 하이픈 범위 감지: " - " 구분자로 정확히 2파트, 양쪽 모두 연산자 없는 버전
+fn detect_hyphen_range(s: String) -> Result(#(String, String), Nil) {
+  case string.split_once(s, " - ") {
+    Ok(#(low, high)) -> {
+      let low_trimmed = string.trim(low)
+      let high_trimmed = string.trim(high)
+      case
+        starts_with_operator(low_trimmed),
+        starts_with_operator(high_trimmed)
+      {
+        False, False -> Ok(#(low_trimmed, high_trimmed))
+        _, _ -> Error(Nil)
+      }
+    }
+    Error(_) -> Error(Nil)
+  }
+}
+
+fn starts_with_operator(s: String) -> Bool {
+  string.starts_with(s, "^")
+  || string.starts_with(s, "~")
+  || string.starts_with(s, ">")
+  || string.starts_with(s, "<")
+  || string.starts_with(s, "=")
+}
+
+/// 하이픈 범위 파싱 (npm 사양 준수)
+/// 하한: 부분 버전이면 missing parts를 0으로 채움 → Gte
+/// 상한: 완전한 3파트이면 Lte (inclusive), 부분이면 다음 범위까지 Lt (exclusive)
+fn parse_hyphen_range(
+  low: String,
+  high: String,
+) -> Result(Constraint, SemverError) {
+  use low_version <- result.try(parse_version(low))
+  let lower = Gte(low_version)
+  use upper <- result.try(parse_hyphen_upper(high))
+  Ok(And(lower, upper))
+}
+
+/// 상한 처리: 파트 수에 따라 inclusive/exclusive 분기
+/// 3파트 "2.3.4" → <= 2.3.4
+/// 2파트 "2.3"   → < 2.4.0
+/// 1파트 "2"     → < 3.0.0
+fn parse_hyphen_upper(s: String) -> Result(Constraint, SemverError) {
+  let parts = string.split(s, ".")
+  case parts {
+    [_, _, _] -> {
+      use v <- result.try(parse_version(s))
+      Ok(Lte(v))
+    }
+    [maj_s, min_s] -> {
+      use maj <- result.try(
+        int.parse(maj_s)
+        |> result.replace_error(InvalidConstraint(
+          "invalid hyphen range upper: " <> s,
+        )),
+      )
+      use min <- result.try(
+        int.parse(min_s)
+        |> result.replace_error(InvalidConstraint(
+          "invalid hyphen range upper: " <> s,
+        )),
+      )
+      Ok(Lt(Version(maj, min + 1, 0, "")))
+    }
+    [maj_s] -> {
+      use maj <- result.try(
+        int.parse(maj_s)
+        |> result.replace_error(InvalidConstraint(
+          "invalid hyphen range upper: " <> s,
+        )),
+      )
+      Ok(Lt(Version(maj + 1, 0, 0, "")))
+    }
+    _ -> Error(InvalidConstraint("invalid hyphen range upper bound: " <> s))
+  }
 }
 
 fn parse_npm_parts(parts: List(String)) -> Result(Constraint, SemverError) {

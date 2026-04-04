@@ -10,6 +10,7 @@ import kirari/cli/output
 import kirari/cli/query
 import kirari/config
 import kirari/platform
+import kirari/sbom
 
 // ---------------------------------------------------------------------------
 // 공개 API
@@ -116,6 +117,7 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
     ),
   )
   |> glint.add(at: ["export"], do: export_cmd())
+  |> glint.add(at: ["export", "sbom"], do: export_sbom_cmd())
   |> glint.add(
     at: ["export", "erlang-shipment"],
     do: gleam_passthrough_cmd(
@@ -313,6 +315,35 @@ fn export_cmd() -> glint.Command(Nil) {
     case install.do_export(".") {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn export_sbom_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Export SBOM (SPDX 2.3 or CycloneDX 1.5)")
+  use format_flag <- glint.flag(
+    glint.string_flag("format")
+    |> glint.flag_default("spdx")
+    |> glint.flag_help("SBOM format: spdx or cyclonedx"),
+  )
+  use output_flag <- glint.flag(
+    glint.string_flag("output")
+    |> glint.flag_default("")
+    |> glint.flag_help("Output file path (default: stdout)"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let format_str = format_flag(flags) |> result.unwrap("spdx")
+    let output_path = output_flag(flags) |> result.unwrap("")
+    case sbom.parse_format(format_str) {
+      Ok(format) ->
+        case install.do_export_sbom(".", format, output_path) {
+          Ok(_) -> Nil
+          Error(e) -> output.print_error(e)
+        }
+      Error(_) ->
+        io.println(
+          "Invalid format: " <> format_str <> " (use 'spdx' or 'cyclonedx')",
+        )
     }
   })
 }
@@ -553,6 +584,7 @@ fn print_help() -> Nil {
   io.println("  store verify  Verify cached package integrity")
   io.println("  license     Audit dependency licenses")
   io.println("  export      Export manifest.toml + package.json")
+  io.println("  export sbom Export SBOM (SPDX/CycloneDX)")
   io.println("  format      Format source code")
   io.println("  fix         Rewrite deprecated code")
   io.println("  new         Create a new Gleam project")

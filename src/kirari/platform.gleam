@@ -80,6 +80,10 @@ pub fn get_current_timestamp() -> String
 @external(erlang, "kirari_ffi", "get_env")
 pub fn get_env(key: String) -> Result(String, String)
 
+/// UUID v4 생성 (crypto:strong_rand_bytes 기반)
+@external(erlang, "kirari_ffi", "uuid_v4")
+pub fn uuid_v4() -> String
+
 /// store 기본 경로 — KIR_STORE 환경변수 또는 ~/.kir/store
 pub fn store_base_path() -> Result(String, String) {
   case get_env("KIR_STORE") {

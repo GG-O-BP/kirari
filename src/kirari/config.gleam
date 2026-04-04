@@ -154,6 +154,7 @@ fn decode_deps_from_table(
               version_constraint: constraint,
               registry: registry,
               dev: dev,
+              optional: False,
             ))
           _ -> Error(Nil)
         }

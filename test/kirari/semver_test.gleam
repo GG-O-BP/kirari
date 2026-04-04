@@ -159,3 +159,66 @@ pub fn npm_star_test() {
   let assert Ok(v) = semver.parse_version("99.0.0")
   assert semver.satisfies(v, c) == True
 }
+
+// ---------------------------------------------------------------------------
+// npm 하이픈 범위
+// ---------------------------------------------------------------------------
+
+pub fn npm_hyphen_range_full_test() {
+  // 1.2.3 - 2.3.4 → >= 1.2.3 and <= 2.3.4
+  let assert Ok(c) = semver.parse_npm_constraint("1.2.3 - 2.3.4")
+  let assert Ok(v1) = semver.parse_version("1.2.3")
+  let assert Ok(v2) = semver.parse_version("2.3.4")
+  let assert Ok(v3) = semver.parse_version("2.3.5")
+  let assert Ok(v4) = semver.parse_version("1.2.2")
+  let assert Ok(v5) = semver.parse_version("1.5.0")
+  assert semver.satisfies(v1, c) == True
+  assert semver.satisfies(v2, c) == True
+  assert semver.satisfies(v3, c) == False
+  assert semver.satisfies(v4, c) == False
+  assert semver.satisfies(v5, c) == True
+}
+
+pub fn npm_hyphen_range_partial_minor_upper_test() {
+  // 1.2.3 - 2.3 → >= 1.2.3 and < 2.4.0
+  let assert Ok(c) = semver.parse_npm_constraint("1.2.3 - 2.3")
+  let assert Ok(v1) = semver.parse_version("2.3.999")
+  let assert Ok(v2) = semver.parse_version("2.4.0")
+  let assert Ok(v3) = semver.parse_version("1.2.3")
+  assert semver.satisfies(v1, c) == True
+  assert semver.satisfies(v2, c) == False
+  assert semver.satisfies(v3, c) == True
+}
+
+pub fn npm_hyphen_range_partial_major_upper_test() {
+  // 1.2.3 - 2 → >= 1.2.3 and < 3.0.0
+  let assert Ok(c) = semver.parse_npm_constraint("1.2.3 - 2")
+  let assert Ok(v1) = semver.parse_version("2.999.999")
+  let assert Ok(v2) = semver.parse_version("3.0.0")
+  let assert Ok(v3) = semver.parse_version("1.2.3")
+  assert semver.satisfies(v1, c) == True
+  assert semver.satisfies(v2, c) == False
+  assert semver.satisfies(v3, c) == True
+}
+
+pub fn npm_hyphen_range_partial_lower_test() {
+  // 1.2 - 2.3.4 → >= 1.2.0 and <= 2.3.4
+  let assert Ok(c) = semver.parse_npm_constraint("1.2 - 2.3.4")
+  let assert Ok(v1) = semver.parse_version("1.2.0")
+  let assert Ok(v2) = semver.parse_version("1.1.9")
+  let assert Ok(v3) = semver.parse_version("2.3.4")
+  assert semver.satisfies(v1, c) == True
+  assert semver.satisfies(v2, c) == False
+  assert semver.satisfies(v3, c) == True
+}
+
+pub fn npm_hyphen_range_or_test() {
+  // 하이픈 범위 + OR: "1.0.0 - 2.0.0 || ^5.0.0"
+  let assert Ok(c) = semver.parse_npm_constraint("1.0.0 - 2.0.0 || ^5.0.0")
+  let assert Ok(v1) = semver.parse_version("1.5.0")
+  let assert Ok(v2) = semver.parse_version("5.1.0")
+  let assert Ok(v3) = semver.parse_version("3.0.0")
+  assert semver.satisfies(v1, c) == True
+  assert semver.satisfies(v2, c) == True
+  assert semver.satisfies(v3, c) == False
+}

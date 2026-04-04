@@ -14,6 +14,8 @@ pub type InstallerError {
   StoreErr(store.StoreError)
   IoError(detail: String)
   LinkError(detail: String)
+  RollbackTriggered(detail: String)
+  RollbackFailed(original_error: String, rollback_error: String)
 }
 
 /// installer 경고 타입
@@ -100,6 +102,142 @@ pub fn clean_stale(
   let _ = clean_dir(project_dir <> "/build/packages", hex_names)
   let _ = clean_dir(project_dir <> "/node_modules", npm_names)
   Ok(Nil)
+}
+
+/// 원자적 설치 — staging에 먼저 설치 후 성공 시 교체, 실패 시 롤백
+pub fn install_atomic(
+  packages: List(ResolvedPackage),
+  bin_entries: List(#(String, List(#(String, String)))),
+  project_dir: String,
+) -> Result(List(Warning), InstallerError) {
+  // project_dir 존재 보장
+  use _ <- result.try(
+    simplifile.create_directory_all(project_dir)
+    |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
+  )
+  // staging 디렉토리 생성 (같은 파일시스템에서 atomic rename 보장)
+  use staging <- result.try(
+    platform.make_temp_dir(project_dir)
+    |> result.map_error(fn(e) { IoError(e) }),
+  )
+  let staging_hex = staging <> "/build/packages"
+  let staging_npm = staging <> "/node_modules"
+  use _ <- result.try(
+    simplifile.create_directory_all(staging_hex)
+    |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
+  )
+  use _ <- result.try(
+    simplifile.create_directory_all(staging_npm)
+    |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
+  )
+  // staging에 패키지 설치
+  case install_each(packages, staging, []) {
+    Ok(warnings) -> {
+      // bin 링크 생성
+      case link_bins(bin_entries, staging) {
+        Ok(_) ->
+          // 성공 → 원자적 교체
+          swap_dirs(project_dir, staging)
+          |> result.map(fn(_) { warnings })
+        Error(e) -> {
+          let _ = simplifile.delete(staging)
+          Error(RollbackTriggered(format_installer_error(e)))
+        }
+      }
+    }
+    Error(e) -> {
+      let _ = simplifile.delete(staging)
+      Error(RollbackTriggered(format_installer_error(e)))
+    }
+  }
+}
+
+/// staging과 실제 디렉토리를 원자적으로 교체
+fn swap_dirs(
+  project_dir: String,
+  staging: String,
+) -> Result(Nil, InstallerError) {
+  case platform.make_temp_dir(project_dir) {
+    Error(e) -> Error(IoError(e))
+    Ok(backup) -> swap_with_backup(project_dir, staging, backup)
+  }
+}
+
+fn swap_with_backup(
+  project_dir: String,
+  staging: String,
+  backup: String,
+) -> Result(Nil, InstallerError) {
+  let hex_dir = project_dir <> "/build/packages"
+  let npm_dir = project_dir <> "/node_modules"
+  let staging_hex = staging <> "/build/packages"
+  let staging_npm = staging <> "/node_modules"
+  let backup_hex = backup <> "/packages"
+  let backup_npm = backup <> "/node_modules"
+  // 1단계: 기존 → backup (기존이 없으면 skip)
+  let hex_backed = case simplifile.is_directory(hex_dir) {
+    Ok(True) ->
+      case platform.atomic_rename(hex_dir, backup_hex) {
+        Ok(_) -> True
+        Error(_) -> False
+      }
+    _ -> False
+  }
+  let npm_backed = case simplifile.is_directory(npm_dir) {
+    Ok(True) ->
+      case platform.atomic_rename(npm_dir, backup_npm) {
+        Ok(_) -> True
+        Error(_) -> False
+      }
+    _ -> False
+  }
+  // 2단계: staging → 실제 위치
+  let _ = simplifile.create_directory_all(project_dir <> "/build")
+  let hex_swap = platform.atomic_rename(staging_hex, hex_dir)
+  let npm_swap = platform.atomic_rename(staging_npm, npm_dir)
+  case hex_swap, npm_swap {
+    Ok(_), Ok(_) -> {
+      // 성공 → backup + staging 정리
+      let _ = simplifile.delete(backup)
+      let _ = simplifile.delete(staging)
+      Ok(Nil)
+    }
+    _, _ -> {
+      // 실패 → backup에서 복원
+      case hex_backed {
+        True -> {
+          let _ = simplifile.delete(hex_dir)
+          let _ = platform.atomic_rename(backup_hex, hex_dir)
+          Nil
+        }
+        False -> Nil
+      }
+      case npm_backed {
+        True -> {
+          let _ = simplifile.delete(npm_dir)
+          let _ = platform.atomic_rename(backup_npm, npm_dir)
+          Nil
+        }
+        False -> Nil
+      }
+      let _ = simplifile.delete(staging)
+      let _ = simplifile.delete(backup)
+      Error(RollbackFailed(
+        original_error: "directory swap failed",
+        rollback_error: "attempted restore from backup",
+      ))
+    }
+  }
+}
+
+fn format_installer_error(e: InstallerError) -> String {
+  case e {
+    StoreErr(_) -> "store error"
+    IoError(d) -> d
+    LinkError(d) -> d
+    RollbackTriggered(d) -> d
+    RollbackFailed(o, r) -> o <> " / " <> r
+  }
 }
 
 // ---------------------------------------------------------------------------

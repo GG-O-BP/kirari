@@ -30,6 +30,8 @@ pub type VersionInfo {
     published_at: String,
     tarball_url: String,
     dependencies: List(Dependency),
+    peer_dependencies: List(PeerDependency),
+    optional_dependencies: List(Dependency),
     os: List(String),
     cpu: List(String),
     has_scripts: Bool,
@@ -40,11 +42,33 @@ pub type VersionInfo {
   )
 }
 
+/// npm peerDependencies 항목 (해결 대상이 아닌 검증 대상)
+pub type PeerDependency {
+  PeerDependency(
+    name: String,
+    constraint: String,
+    registry: Registry,
+    optional: Bool,
+  )
+}
+
+/// peer dependency 검증 경고
+pub type PeerWarning {
+  PeerMissing(package: String, peer: String, constraint: String)
+  PeerIncompatible(
+    package: String,
+    peer: String,
+    required: String,
+    installed: String,
+  )
+}
+
 /// 해결 결과 — 패키지 목록 + 버전 정보 캐시 (파이프라인에서 tarball_url 조회용)
 pub type ResolveResult {
   ResolveResult(
     packages: List(ResolvedPackage),
     version_infos: Dict(String, VersionInfo),
+    peer_warnings: List(PeerWarning),
   )
 }
 
@@ -163,12 +187,15 @@ fn do_resolve(
   visited: List(String),
 ) -> Result(ResolveResult, ResolverError) {
   case queue {
-    [] ->
+    [] -> {
+      let peer_warnings = verify_peer_dependencies(resolved, version_cache)
       Ok(ResolveResult(
         packages: dict.values(resolved)
           |> list.sort(types.compare_packages),
         version_infos: version_cache,
+        peer_warnings: peer_warnings,
       ))
+    }
     [dep, ..rest] -> {
       let key = dep.name <> ":" <> types.registry_to_string(dep.registry)
       // 제약 조건 기록
@@ -199,34 +226,49 @@ fn do_resolve(
           case list.contains(visited, key) {
             True -> Error(CyclicDependency([key, ..visited]))
             False -> {
-              use #(pkg, vi) <- result.try(resolve_one(
-                dep,
-                existing_lock,
-                exclude_newer,
-                fetch,
-              ))
-              // 의존성이 비어있으면 개별 release API에서 조회
-              use vi <- result.try(enrich_dependencies(
-                vi,
-                pkg.name,
-                pkg.version,
-                dep.registry,
-                fetch_deps,
-              ))
-              let new_resolved = dict.insert(resolved, key, pkg)
-              let new_cache = dict.insert(version_cache, key, vi)
-              let transitive = vi.dependencies
-              do_resolve(
-                list.append(rest, transitive),
-                new_resolved,
-                new_cache,
-                constraints_map,
-                existing_lock,
-                exclude_newer,
-                fetch,
-                fetch_deps,
-                [key, ..visited],
-              )
+              case resolve_one(dep, existing_lock, exclude_newer, fetch) {
+                Ok(#(pkg, vi)) -> {
+                  // 의존성이 비어있으면 개별 release API에서 조회
+                  use vi <- result.try(enrich_dependencies(
+                    vi,
+                    pkg.name,
+                    pkg.version,
+                    dep.registry,
+                    fetch_deps,
+                  ))
+                  let new_resolved = dict.insert(resolved, key, pkg)
+                  let new_cache = dict.insert(version_cache, key, vi)
+                  // 전이 의존성 + optional 의존성 모두 큐에 추가
+                  let transitive =
+                    list.append(vi.dependencies, vi.optional_dependencies)
+                  do_resolve(
+                    list.append(rest, transitive),
+                    new_resolved,
+                    new_cache,
+                    constraints_map,
+                    existing_lock,
+                    exclude_newer,
+                    fetch,
+                    fetch_deps,
+                    [key, ..visited],
+                  )
+                }
+                Error(_) if dep.optional -> {
+                  // optional 의존성 해결 실패 → 건너뛰고 계속
+                  do_resolve(
+                    rest,
+                    resolved,
+                    version_cache,
+                    constraints_map,
+                    existing_lock,
+                    exclude_newer,
+                    fetch,
+                    fetch_deps,
+                    visited,
+                  )
+                }
+                Error(e) -> Error(e)
+              }
             }
           }
         }
@@ -288,6 +330,8 @@ fn resolve_one(
           published_at: "",
           tarball_url: "",
           dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
           os: [],
           cpu: [],
           has_scripts: False,
@@ -444,6 +488,7 @@ fn fetch_release_deps_from_registries(
             version_constraint: d.requirement,
             registry: Hex,
             dev: False,
+            optional: False,
           )
         })
       let deprecated = case info.retired {
@@ -474,6 +519,61 @@ fn enrich_dependencies(
   }
 }
 
+// ---------------------------------------------------------------------------
+// peer dependency 검증 (post-resolution)
+// ---------------------------------------------------------------------------
+
+/// 해결 완료 후 모든 패키지의 peerDependencies가 만족되는지 검증
+fn verify_peer_dependencies(
+  resolved: Dict(String, ResolvedPackage),
+  version_cache: Dict(String, VersionInfo),
+) -> List(PeerWarning) {
+  dict.to_list(version_cache)
+  |> list.flat_map(fn(entry) {
+    let #(key, vi) = entry
+    // key에서 패키지명 추출 (name:registry 형식)
+    let package_name = case string.split_once(key, ":") {
+      Ok(#(name, _)) -> name
+      Error(_) -> key
+    }
+    list.filter_map(vi.peer_dependencies, fn(peer) {
+      let peer_key = peer.name <> ":" <> types.registry_to_string(peer.registry)
+      case dict.get(resolved, peer_key) {
+        Ok(installed) ->
+          // peer 패키지가 설치됨 → 버전 제약 조건 검증
+          case
+            semver.parse_npm_constraint(peer.constraint),
+            semver.parse_version(installed.version)
+          {
+            Ok(constraint), Ok(version) ->
+              case semver.satisfies(version, constraint) {
+                True -> Error(Nil)
+                False ->
+                  Ok(PeerIncompatible(
+                    package: package_name,
+                    peer: peer.name,
+                    required: peer.constraint,
+                    installed: installed.version,
+                  ))
+              }
+            _, _ -> Error(Nil)
+          }
+        Error(_) ->
+          // peer 패키지 미설치
+          case peer.optional {
+            True -> Error(Nil)
+            False ->
+              Ok(PeerMissing(
+                package: package_name,
+                peer: peer.name,
+                constraint: peer.constraint,
+              ))
+          }
+      }
+    })
+  })
+}
+
 fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) {
   use versions <- result.try(
     hex.get_versions(name)
@@ -495,8 +595,11 @@ fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
             version_constraint: d.requirement,
             registry: Hex,
             dev: False,
+            optional: False,
           )
         }),
+        peer_dependencies: [],
+        optional_dependencies: [],
         os: [],
         cpu: [],
         has_scripts: False,
@@ -526,6 +629,24 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
             version_constraint: d.constraint,
             registry: Npm,
             dev: False,
+            optional: False,
+          )
+        }),
+        peer_dependencies: list.map(v.peer_dependencies, fn(p) {
+          PeerDependency(
+            name: p.name,
+            constraint: p.constraint,
+            registry: Npm,
+            optional: p.optional,
+          )
+        }),
+        optional_dependencies: list.map(v.optional_dependencies, fn(d) {
+          types.Dependency(
+            name: d.name,
+            version_constraint: d.constraint,
+            registry: Npm,
+            dev: False,
+            optional: True,
           )
         }),
         os: v.os,

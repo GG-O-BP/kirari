@@ -17,7 +17,8 @@
     chmod_executable/1,
     verify_ecdsa_signature/3,
     get_current_timestamp/0,
-    get_env/1
+    get_env/1,
+    uuid_v4/0
 ]).
 
 %% tar/tgz 압축 해제
@@ -212,3 +213,10 @@ get_env(Key) when is_binary(Key) ->
         false -> {error, <<"not set">>};
         Val -> {ok, list_to_binary(Val)}
     end.
+
+%% UUID v4 생성 (RFC 4122)
+uuid_v4() ->
+    <<A:32, B:16, _:4, C:12, _:2, D:62>> = crypto:strong_rand_bytes(16),
+    list_to_binary(io_lib:format(
+        "~8.16.0b-~4.16.0b-4~3.16.0b-~1.16.0b~15.16.0b",
+        [A, B, C, 8 bor (D bsr 60), D band 16#0FFFFFFFFFFFFFFF])).

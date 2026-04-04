@@ -4,6 +4,7 @@ import gleam/string
 import kirari/config
 import kirari/export
 import kirari/ffi as ffi_detect
+import kirari/installer
 import kirari/license
 import kirari/lockfile
 import kirari/migrate
@@ -70,7 +71,18 @@ pub fn format_error(error: KirError) -> String {
         pipeline.DownloadError(name, ver, d) ->
           "download failed: " <> name <> "@" <> ver <> " — " <> d
         pipeline.StoreErr(se) -> "store error: " <> string.inspect(se)
-        pipeline.InstallErr(ie) -> "install error: " <> string.inspect(ie)
+        pipeline.InstallErr(ie) ->
+          case ie {
+            installer.RollbackTriggered(d) ->
+              "install failed, rolled back to previous state: " <> d
+            installer.RollbackFailed(o, r) ->
+              "CRITICAL: install failed ("
+              <> o
+              <> ") and rollback also failed ("
+              <> r
+              <> "). Manual recovery may be needed."
+            _ -> "install error: " <> string.inspect(ie)
+          }
         pipeline.ProvenanceErr(name, detail) ->
           "provenance verification failed: " <> name <> " — " <> detail
       }
