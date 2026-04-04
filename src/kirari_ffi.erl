@@ -16,7 +16,8 @@
     make_symlink/2,
     chmod_executable/1,
     verify_ecdsa_signature/3,
-    get_current_timestamp/0
+    get_current_timestamp/0,
+    get_env/1
 ]).
 
 %% tar/tgz 압축 해제
@@ -204,3 +205,10 @@ get_current_timestamp() ->
     {{Y,Mo,D},{H,Mi,S}} = calendar:universal_time(),
     list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ",
                                  [Y,Mo,D,H,Mi,S])).
+
+%% 환경변수 조회
+get_env(Key) when is_binary(Key) ->
+    case os:getenv(binary_to_list(Key)) of
+        false -> {error, <<"not set">>};
+        Val -> {ok, list_to_binary(Val)}
+    end.

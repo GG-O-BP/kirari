@@ -74,3 +74,20 @@ pub fn verify_ecdsa_signature(
 /// 현재 시각 RFC 3339 형식
 @external(erlang, "kirari_ffi", "get_current_timestamp")
 pub fn get_current_timestamp() -> String
+
+/// 환경변수 조회
+@external(erlang, "kirari_ffi", "get_env")
+pub fn get_env(key: String) -> Result(String, String)
+
+/// store 기본 경로 — KIR_STORE 환경변수 또는 ~/.kir/store
+pub fn store_base_path() -> Result(String, String) {
+  case get_env("KIR_STORE") {
+    Ok(custom) -> Ok(custom)
+    Error(_) -> {
+      use home <- result.try(get_home_dir())
+      Ok(home <> "/.kir/store")
+    }
+  }
+}
+
+import gleam/result

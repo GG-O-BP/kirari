@@ -1,6 +1,7 @@
 //// 프로젝트 설치 — store에서 build/packages, node_modules로 링크/복사
 
 import filepath
+import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
@@ -38,6 +39,8 @@ pub fn install_package(
     store.package_path(package.sha256, package.registry)
     |> result.map_error(StoreErr),
   )
+  // 플랫폼 불일치 경고 (npm만)
+  warn_platform_mismatch(package)
   let target = install_target(package, project_dir)
   // 기존 디렉토리 제거 후 복사
   let _ = simplifile.delete(target)
@@ -256,6 +259,46 @@ fn create_cmd_wrapper(
   let content = "@\"%~dp0\\..\\" <> relative <> "\" %*\r\n"
   simplifile.write(cmd_path, content)
   |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) })
+}
+
+fn warn_platform_mismatch(package: ResolvedPackage) -> Nil {
+  case package.registry, package.platform {
+    Npm, Ok(plat) -> {
+      let current_os = platform.get_platform_os()
+      let current_arch = platform.get_platform_arch()
+      let os_ok = case plat.os {
+        [] -> True
+        os_list ->
+          list.any(os_list, fn(o) { o == current_os })
+          || list.any(os_list, fn(o) {
+            string.starts_with(o, "!") && o != "!" <> current_os
+          })
+      }
+      let cpu_ok = case plat.cpu {
+        [] -> True
+        cpu_list ->
+          list.any(cpu_list, fn(c) { c == current_arch })
+          || list.any(cpu_list, fn(c) {
+            string.starts_with(c, "!") && c != "!" <> current_arch
+          })
+      }
+      case os_ok && cpu_ok {
+        True -> Nil
+        False ->
+          io.println(
+            "\u{26a0} "
+            <> package.name
+            <> "@"
+            <> package.version
+            <> " may not be compatible with "
+            <> current_os
+            <> "/"
+            <> current_arch,
+          )
+      }
+    }
+    _, _ -> Nil
+  }
 }
 
 fn clean_dir(

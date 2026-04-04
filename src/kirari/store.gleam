@@ -21,20 +21,19 @@ pub type StoreResult =
 // 저장소 루트
 // ---------------------------------------------------------------------------
 
-/// ~/.kir/store 경로를 반환, 없으면 생성
+/// KIR_STORE 환경변수 또는 ~/.kir/store 경로를 반환, 없으면 생성
 pub fn store_root() -> Result(String, StoreError) {
-  use home <- result.try(
-    platform.get_home_dir()
+  use base <- result.try(
+    platform.store_base_path()
     |> result.map_error(fn(e) { store_types.HomeNotFound(e) }),
   )
-  let root = home <> "/.kir/store"
   use _ <- result.try(
-    simplifile.create_directory_all(root)
+    simplifile.create_directory_all(base)
     |> result.map_error(fn(e) {
       store_types.IoError(simplifile.describe_error(e))
     }),
   )
-  Ok(root)
+  Ok(base)
 }
 
 // ---------------------------------------------------------------------------

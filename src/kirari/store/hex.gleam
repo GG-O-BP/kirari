@@ -13,13 +13,13 @@ import simplifile
 // 저장소 루트
 // ---------------------------------------------------------------------------
 
-/// ~/.kir/store/hex 경로를 반환, 없으면 생성
+/// KIR_STORE/hex 또는 ~/.kir/store/hex 경로를 반환, 없으면 생성
 pub fn store_root() -> Result(String, store_types.StoreError) {
-  use home <- result.try(
-    platform.get_home_dir()
+  use base <- result.try(
+    platform.store_base_path()
     |> result.map_error(fn(e) { store_types.HomeNotFound(e) }),
   )
-  let root = home <> "/.kir/store/hex"
+  let root = base <> "/hex"
   use _ <- result.try(
     simplifile.create_directory_all(root)
     |> result.map_error(fn(e) {

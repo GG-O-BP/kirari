@@ -35,6 +35,11 @@ pub fn parse_version(s: String) -> Result(Version, String) {
     True -> string.drop_start(s, 1)
     False -> s
   }
+  // build metadata 제거 (+build.123 → SemVer 사양: 비교 시 무시)
+  let s = case string.split_once(s, "+") {
+    Ok(#(before, _build)) -> before
+    Error(_) -> s
+  }
   // pre-release 분리
   let #(base, pre) = case string.split_once(s, "-") {
     Ok(#(b, p)) -> #(b, p)
@@ -68,6 +73,13 @@ pub fn parse_version(s: String) -> Result(Version, String) {
       )
       Ok(Version(major: maj, minor: min, patch: 0, pre: pre))
     }
+    [maj_s] -> {
+      use maj <- result.try(
+        int.parse(maj_s)
+        |> result.replace_error("invalid major: " <> maj_s),
+      )
+      Ok(Version(major: maj, minor: 0, patch: 0, pre: ""))
+    }
     _ -> Error("expected MAJOR.MINOR.PATCH, got: " <> s)
   }
 }
@@ -97,7 +109,31 @@ fn compare_pre(a: String, b: String) -> Order {
     "", "" -> order.Eq
     "", _ -> order.Gt
     _, "" -> order.Lt
-    _, _ -> string.compare(a, b)
+    _, _ -> compare_pre_identifiers(string.split(a, "."), string.split(b, "."))
+  }
+}
+
+/// SemVer 2.0.0 사양 11항: pre-release 식별자 비교
+fn compare_pre_identifiers(a: List(String), b: List(String)) -> Order {
+  case a, b {
+    [], [] -> order.Eq
+    [], _ -> order.Lt
+    _, [] -> order.Gt
+    [ha, ..ra], [hb, ..rb] ->
+      case compare_pre_identifier(ha, hb) {
+        order.Eq -> compare_pre_identifiers(ra, rb)
+        other -> other
+      }
+  }
+}
+
+/// 숫자 식별자는 정수 비교, 문자 식별자는 사전순, 숫자 < 문자
+fn compare_pre_identifier(a: String, b: String) -> Order {
+  case int.parse(a), int.parse(b) {
+    Ok(na), Ok(nb) -> int.compare(na, nb)
+    Ok(_), Error(_) -> order.Lt
+    Error(_), Ok(_) -> order.Gt
+    Error(_), Error(_) -> string.compare(a, b)
   }
 }
 

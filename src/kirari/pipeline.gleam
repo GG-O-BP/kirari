@@ -38,8 +38,12 @@ pub fn run(
   project_dir: String,
   security: SecurityConfig,
 ) -> Result(PipelineResult, PipelineError) {
-  // 0. npm 서명 키 로드 (ProvenanceIgnore가 아닐 때만)
-  let npm_keys = load_npm_keys(security.provenance)
+  // 0. npm 서명 키 로드 (npm 패키지가 있고 ProvenanceIgnore가 아닐 때만)
+  let has_npm = list.any(resolve_result.packages, fn(p) { p.registry == Npm })
+  let npm_keys = case has_npm {
+    True -> load_npm_keys(security.provenance)
+    False -> []
+  }
   let ctx =
     DownloadContext(
       version_infos: resolve_result.version_infos,
