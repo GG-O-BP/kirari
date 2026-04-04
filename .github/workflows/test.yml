@@ -17,7 +17,18 @@ jobs:
           otp-version: "28"
           gleam-version: "1.15.2"
           rebar3-version: "3"
-          # elixir-version: "1"
-      - run: gleam deps download
-      - run: gleam test
-      - run: gleam format --check src test
+
+      # Bootstrap: gleam으로 kir 빌드 및 설치
+      - name: Bootstrap and install kir
+        run: |
+          gleam build && gleam export erlang-shipment
+          cp scripts/kir build/erlang-shipment/kir
+          chmod +x build/erlang-shipment/kir
+          sudo cp -r build/erlang-shipment /usr/local/lib/erlang-shipment
+          sudo ln -sf /usr/local/lib/erlang-shipment/kir /usr/local/bin/kir
+
+      # kir로 검증
+      - run: kir install --frozen
+      - run: kir check
+      - run: kir test
+      - run: kir format --check src test
