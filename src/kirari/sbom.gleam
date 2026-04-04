@@ -1,7 +1,6 @@
 //// SBOM 생성 — SPDX 2.3 / CycloneDX 1.5 JSON 형식
 
 import gleam/dict.{type Dict}
-import gleam/result
 import kirari/resolver.{type VersionInfo}
 import kirari/sbom/cyclonedx
 import kirari/sbom/spdx
