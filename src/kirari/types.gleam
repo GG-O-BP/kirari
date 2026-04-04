@@ -62,6 +62,7 @@ pub type ResolvedPackage {
     sha256: String,
     has_scripts: Bool,
     platform: Result(Platform, Nil),
+    license: String,
   )
 }
 
@@ -100,12 +101,20 @@ pub type ProvenancePolicy {
   ProvenanceRequire
 }
 
+/// 라이선스 정책
+pub type LicensePolicy {
+  LicenseAllow(licenses: List(String))
+  LicenseDeny(licenses: List(String))
+  LicenseNoPolicy
+}
+
 /// [security] 섹션
 pub type SecurityConfig {
   SecurityConfig(
     exclude_newer: Result(String, Nil),
     npm_scripts: ScriptPolicy,
     provenance: ProvenancePolicy,
+    license_policy: LicensePolicy,
   )
 }
 
@@ -115,6 +124,7 @@ pub fn default_security_config() -> SecurityConfig {
     exclude_newer: Error(Nil),
     npm_scripts: DenyAll,
     provenance: ProvenanceWarn,
+    license_policy: LicenseNoPolicy,
   )
 }
 

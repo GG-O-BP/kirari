@@ -28,6 +28,7 @@ pub fn compare_packages_by_name_test() {
       sha256: "a",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     )
   let b =
     ResolvedPackage(
@@ -37,6 +38,7 @@ pub fn compare_packages_by_name_test() {
       sha256: "b",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     )
   assert types.compare_packages(a, b) == order.Lt
   assert types.compare_packages(b, a) == order.Gt
@@ -52,6 +54,7 @@ pub fn compare_packages_same_name_different_registry_test() {
       sha256: "h",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     )
   let npm_pkg =
     ResolvedPackage(
@@ -61,6 +64,7 @@ pub fn compare_packages_same_name_different_registry_test() {
       sha256: "n",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     )
   // "hex" < "npm" 사전순
   assert types.compare_packages(hex_pkg, npm_pkg) == order.Lt

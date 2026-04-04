@@ -1,6 +1,8 @@
 ---
 paths:
   - "src/kirari/security*.gleam"
+  - "src/kirari/spdx*.gleam"
+  - "src/kirari/license*.gleam"
   - "src/kirari/store/**/*.gleam"
   - "src/kirari/store.gleam"
   - "src/kirari/tarball.gleam"
@@ -47,6 +49,17 @@ paths:
 ## 플랫폼 필터링
 - npm 패키지의 os/cpu 필드로 현재 플랫폼에 맞지 않는 버전 제외
 - "!" prefix는 제외 목록 (e.g., "!win32")
+
+## 라이선스 준수
+- SPDX 2.3 표현식 파서 (spdx.gleam) — 재귀 하강, AND/OR/WITH 연산자 우선순위
+- Hex: meta.licenses 배열을 " OR "로 조인 → SPDX 표현식
+- npm: version별 license 필드 파싱
+- kir.lock에 license 필드 저장 (비어있으면 생략)
+- 정책: LicenseAllow (허용 목록) | LicenseDeny (금지 목록) | LicenseNoPolicy
+- satisfies: OR면 하나만, AND면 둘 다, WITH면 base만
+- violates: OR면 전부 금지여야, AND면 하나라도 금지면
+- case-insensitive 비교 (레지스트리 대소문자 불일치 대응)
+- MissingLicense, UnparsableLicense 경고 처리
 
 ## 파일 안전
 - tarball 추출 시 path traversal 거부 (../../)

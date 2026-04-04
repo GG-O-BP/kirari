@@ -30,6 +30,7 @@ pub fn run_skips_cached_packages_test() {
       sha256: hash,
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     )
   let resolve_result = ResolveResult(packages: [pkg], version_infos: dict.new())
   let security = types.default_security_config()

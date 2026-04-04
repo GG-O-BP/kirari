@@ -12,6 +12,7 @@ import kirari/cli/error.{type KirError, ConfigErr, LockErr, ResolveErr}
 import kirari/cli/output
 import kirari/config
 import kirari/installer
+import kirari/license
 import kirari/lockfile
 import kirari/platform
 import kirari/resolver
@@ -343,5 +344,113 @@ pub fn do_doctor(dir: String) -> Nil {
         <> " packages)",
       )
     Error(_) -> io.println("Lock: kir.lock ✗")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// license
+// ---------------------------------------------------------------------------
+
+pub fn do_license(dir: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(config.read_config(dir) |> result.map_error(ConfigErr))
+  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
+  let packages =
+    list.map(lock.packages, fn(p) {
+      license.PackageLicense(
+        name: p.name,
+        version: p.version,
+        registry: types.registry_to_string(p.registry),
+        license_expression: p.license,
+      )
+    })
+  // 라이선스별 그룹 출력
+  let groups = license.group_by_license(packages)
+  io.println("Dependency Licenses:")
+  io.println("")
+  list.each(groups, fn(group) {
+    let #(lic, pkgs) = group
+    let label = case lic {
+      "" -> "(unknown)"
+      l -> l
+    }
+    io.println("  " <> output.color_green(label))
+    list.each(pkgs, fn(p) {
+      io.println(
+        "    " <> p.name <> "@" <> p.version <> " (" <> p.registry <> ")",
+      )
+    })
+  })
+  // 정책 검사
+  let violations = license.check(packages, cfg.security.license_policy)
+  io.println("")
+  case violations {
+    [] -> {
+      io.println(
+        output.color_green("All")
+        <> " "
+        <> int.to_string(list.length(packages))
+        <> " packages comply with license policy",
+      )
+      Ok(Nil)
+    }
+    _ -> {
+      io.println(output.color_red("License violations found:"))
+      list.each(violations, fn(v) {
+        case v {
+          license.DeniedLicense(name, ver, reg, lic, _) ->
+            io.println(
+              "  "
+              <> output.color_red("DENIED")
+              <> " "
+              <> name
+              <> "@"
+              <> ver
+              <> " ("
+              <> reg
+              <> ") — "
+              <> lic,
+            )
+          license.NotAllowed(name, ver, reg, lic, _) ->
+            io.println(
+              "  "
+              <> output.color_red("NOT ALLOWED")
+              <> " "
+              <> name
+              <> "@"
+              <> ver
+              <> " ("
+              <> reg
+              <> ") — "
+              <> lic,
+            )
+          license.MissingLicense(name, ver, reg) ->
+            io.println(
+              "  "
+              <> output.color_yellow("MISSING")
+              <> " "
+              <> name
+              <> "@"
+              <> ver
+              <> " ("
+              <> reg
+              <> ")",
+            )
+          license.UnparsableLicense(name, ver, reg, raw, _) ->
+            io.println(
+              "  "
+              <> output.color_yellow("UNPARSABLE")
+              <> " "
+              <> name
+              <> "@"
+              <> ver
+              <> " ("
+              <> reg
+              <> ") — "
+              <> raw,
+            )
+        }
+      })
+      Ok(Nil)
+    }
   }
 }

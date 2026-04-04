@@ -56,6 +56,7 @@ fn test_lock() -> KirLock {
       sha256: "aaa",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -64,6 +65,7 @@ fn test_lock() -> KirLock {
       sha256: "bbb",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     ),
   ])
 }
@@ -83,6 +85,7 @@ fn test_version_infos() -> dict.Dict(String, VersionInfo) {
         signatures: [],
         integrity: "",
         deprecated: "",
+        license: "",
       ),
     ),
     #(
@@ -98,6 +101,7 @@ fn test_version_infos() -> dict.Dict(String, VersionInfo) {
         signatures: [],
         integrity: "",
         deprecated: "",
+        license: "",
       ),
     ),
   ])
@@ -169,6 +173,7 @@ pub fn transitive_deps_tree_test() {
         sha256: "x",
         has_scripts: False,
         platform: Error(Nil),
+        license: "",
       ),
       ResolvedPackage(
         name: "gleam_stdlib",
@@ -177,6 +182,7 @@ pub fn transitive_deps_tree_test() {
         sha256: "y",
         has_scripts: False,
         platform: Error(Nil),
+        license: "",
       ),
     ])
   let vis =
@@ -201,6 +207,7 @@ pub fn transitive_deps_tree_test() {
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ),
       #(
@@ -216,6 +223,7 @@ pub fn transitive_deps_tree_test() {
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ),
     ])

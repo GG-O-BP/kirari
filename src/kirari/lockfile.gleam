@@ -78,6 +78,7 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
       let has_scripts =
         tom.get_bool(table, ["has_scripts"]) |> result.unwrap(False)
       let platform = decode_platform(table)
+      let license = tom.get_string(table, ["license"]) |> result.unwrap("")
       Ok(ResolvedPackage(
         name: name,
         version: version,
@@ -85,6 +86,7 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
         sha256: sha256,
         has_scripts: has_scripts,
         platform: platform,
+        license: license,
       ))
     }
     _ -> Error(Nil)
@@ -150,11 +152,12 @@ pub fn encode(lock: KirLock) -> String {
 }
 
 fn encode_package(pkg: ResolvedPackage) -> String {
-  // 필드를 사전순: cpu, has_scripts, name, os, registry, sha256, version
+  // 필드를 사전순: cpu, has_scripts, license, name, os, registry, sha256, version
   let base =
     "[[package]]\n"
     <> encode_platform_cpu(pkg.platform)
     <> encode_has_scripts(pkg.has_scripts)
+    <> encode_license(pkg.license)
     <> "name = "
     <> quote(pkg.name)
     <> "\n"
@@ -169,6 +172,13 @@ fn encode_package(pkg: ResolvedPackage) -> String {
     <> quote(pkg.version)
     <> "\n"
   base
+}
+
+fn encode_license(license: String) -> String {
+  case license {
+    "" -> ""
+    l -> "license = " <> quote(l) <> "\n"
+  }
 }
 
 fn encode_has_scripts(has_scripts: Bool) -> String {

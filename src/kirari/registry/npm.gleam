@@ -33,6 +33,7 @@ pub type NpmPackageVersion {
     signatures: List(NpmSignature),
     integrity: String,
     deprecated: String,
+    license: String,
   )
 }
 
@@ -152,6 +153,7 @@ pub fn parse_versions_response(
         signatures: v.signatures,
         integrity: v.integrity,
         deprecated: v.deprecated,
+        license: v.license,
       )
     })
     |> list.sort(fn(a, b) { string.compare(a.version, b.version) })
@@ -170,6 +172,7 @@ type VersionValue {
     signatures: List(NpmSignature),
     integrity: String,
     deprecated: String,
+    license: String,
   )
 }
 
@@ -192,6 +195,7 @@ fn version_value_decoder() -> decode.Decoder(VersionValue) {
     decode.dict(decode.string, decode.string),
   )
   use deprecated <- decode.optional_field("deprecated", "", decode.string)
+  use license <- decode.optional_field("license", "", decode.string)
   let dep_list =
     dict.to_list(deps)
     |> list.map(fn(entry) {
@@ -208,6 +212,7 @@ fn version_value_decoder() -> decode.Decoder(VersionValue) {
     signatures: signatures,
     integrity: integrity,
     deprecated: deprecated,
+    license: license,
   ))
 }
 

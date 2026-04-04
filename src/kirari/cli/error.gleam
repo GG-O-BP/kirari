@@ -4,6 +4,7 @@ import gleam/string
 import kirari/config
 import kirari/export
 import kirari/ffi as ffi_detect
+import kirari/license
 import kirari/lockfile
 import kirari/migrate
 import kirari/pipeline
@@ -18,6 +19,7 @@ pub type KirError {
   ResolveErr(resolver.ResolverError)
   PipelineErr(pipeline.PipelineError)
   ExportErr(export.ExportError)
+  LicenseErr(license.LicenseError)
   FfiErr(ffi_detect.FfiError)
   UserError(detail: String)
 }
@@ -79,6 +81,10 @@ pub fn format_error(error: KirError) -> String {
     FfiErr(e) ->
       case e {
         ffi_detect.IoError(d) -> "ffi detection error: " <> d
+      }
+    LicenseErr(e) ->
+      case e {
+        license.PolicyConflict(d) -> "license policy conflict: " <> d
       }
     UserError(d) -> d
   }

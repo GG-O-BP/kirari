@@ -36,6 +36,7 @@ pub type VersionInfo {
     signatures: List(#(String, String)),
     integrity: String,
     deprecated: String,
+    license: String,
   )
 }
 
@@ -293,6 +294,7 @@ fn resolve_one(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: pkg.license,
         ))
       Ok(#(pkg, vi))
     }
@@ -327,6 +329,7 @@ fn resolve_one(
               sha256: "",
               has_scripts: False,
               platform: Error(Nil),
+              license: best.license,
             ),
             best,
           ))
@@ -500,6 +503,7 @@ fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
         signatures: [],
         integrity: "",
         deprecated: "",
+        license: v.license,
       )
     }),
   )
@@ -530,6 +534,7 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
         signatures: list.map(v.signatures, fn(s) { #(s.keyid, s.sig) }),
         integrity: v.integrity,
         deprecated: v.deprecated,
+        license: v.license,
       )
     }),
   )

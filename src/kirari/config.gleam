@@ -218,10 +218,19 @@ fn decode_security_section(doc: Dict(String, Toml)) -> SecurityConfig {
     Ok("require") -> types.ProvenanceRequire
     _ -> types.ProvenanceWarn
   }
+  let license_allow = decode_string_array(doc, ["security", "license-allow"])
+  let license_deny = decode_string_array(doc, ["security", "license-deny"])
+  let license_policy = case license_allow, license_deny {
+    [], [] -> types.LicenseNoPolicy
+    allow, [] -> types.LicenseAllow(allow)
+    [], deny -> types.LicenseDeny(deny)
+    allow, _ -> types.LicenseAllow(allow)
+  }
   SecurityConfig(
     exclude_newer: exclude_newer,
     npm_scripts: npm_scripts,
     provenance: provenance,
+    license_policy: license_policy,
   )
 }
 
@@ -359,6 +368,18 @@ fn encode_security_section(sec: SecurityConfig) -> String {
     types.ProvenanceIgnore -> ["provenance = " <> quote("ignore"), ..lines]
     types.ProvenanceWarn -> lines
     types.ProvenanceRequire -> ["provenance = " <> quote("require"), ..lines]
+  }
+  // LicenseNoPolicy가 기본값이므로 생략
+  let lines = case sec.license_policy {
+    types.LicenseAllow(ls) -> {
+      let quoted = list.map(ls, quote) |> string.join(", ")
+      ["license-allow = [" <> quoted <> "]", ..lines]
+    }
+    types.LicenseDeny(ls) -> {
+      let quoted = list.map(ls, quote) |> string.join(", ")
+      ["license-deny = [" <> quoted <> "]", ..lines]
+    }
+    types.LicenseNoPolicy -> lines
   }
   case lines {
     [] -> ""

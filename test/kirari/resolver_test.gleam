@@ -32,6 +32,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -44,6 +45,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -56,6 +58,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ])
     "gleam_json", Hex ->
@@ -78,6 +81,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ])
     "highlight.js", Npm ->
@@ -93,6 +97,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -105,6 +110,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -117,6 +123,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ])
     // 다이아몬드 충돌 테스트용
@@ -140,6 +147,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ])
     "pkg_b", Hex ->
@@ -162,6 +170,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ])
     "pkg_shared", Hex ->
@@ -177,6 +186,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -189,6 +199,7 @@ fn mock_fetch(
           signatures: [],
           integrity: "",
           deprecated: "",
+          license: "",
         ),
       ])
     _, _ -> Error(resolver.PackageNotFound(name, registry))
@@ -317,6 +328,7 @@ pub fn resolve_prefers_lock_test() {
         sha256: "abc",
         has_scripts: False,
         platform: Error(Nil),
+        license: "",
       ),
     ])
   let assert Ok(resolved) = resolver.resolve_with(config, Ok(lock), mock_fetch)

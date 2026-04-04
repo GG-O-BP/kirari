@@ -24,6 +24,7 @@ pub type PackageVersion {
     version: String,
     inserted_at: String,
     dependencies: List(VersionDependency),
+    license: String,
   )
 }
 
@@ -175,7 +176,18 @@ pub fn parse_versions_response(
 ) -> Result(List(PackageVersion), HexError) {
   let decoder = {
     use releases <- decode.field("releases", decode.list(release_decoder()))
-    decode.success(releases)
+    use licenses <- decode.optional_field("meta", [], {
+      use ls <- decode.optional_field(
+        "licenses",
+        [],
+        decode.list(decode.string),
+      )
+      decode.success(ls)
+    })
+    let license = string.join(licenses, " OR ")
+    decode.success(
+      list.map(releases, fn(r) { PackageVersion(..r, license: license) }),
+    )
   }
   json.parse(body, decoder)
   |> result.map_error(fn(e) { ParseResponseError(string.inspect(e)) })
@@ -189,6 +201,7 @@ fn release_decoder() -> decode.Decoder(PackageVersion) {
     version: version,
     inserted_at: inserted_at,
     dependencies: deps,
+    license: "",
   ))
 }
 

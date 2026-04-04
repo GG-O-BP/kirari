@@ -17,6 +17,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       sha256: "abc123",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -25,6 +26,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       sha256: "def456",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     ),
     ResolvedPackage(
       name: "gleam_json",
@@ -33,6 +35,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       sha256: "ghi789",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     ),
   ]
 }
@@ -119,6 +122,7 @@ pub fn verify_frozen_mismatch_test() {
       sha256: "new_hash",
       has_scripts: False,
       platform: Error(Nil),
+      license: "",
     ),
   ]
   let assert Error(lockfile.FrozenMismatch(_)) =

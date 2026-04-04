@@ -18,7 +18,11 @@ kir 프로젝트의 코드를 리뷰한다.
 8. 플랫폼 필터링: os/cpu "!" prefix 처리, 빈 목록 = 전체 허용
 9. GC: Hex 불변(never expires) vs npm 보존 정책 구분
 10. 트리: tree.build가 version_infos를 받아 재귀적 전이 의존성 구축, visited 순환 방지
-11. 테스트: 대응하는 테스트 파일 존재 여부
+11. SPDX: spdx.gleam 파서가 opaque Expression 타입, SPDX 2.3 문법 준수, satisfies/violates 정확성
+12. 라이선스: license.gleam의 AllowList/DenyList/NoPolicy 분기, Missing/Unparsable 처리
+13. CLI 구조: cli.gleam은 라우터만, cli/install.gleam은 워크플로우, cli/query.gleam은 조회, cli/output.gleam은 출력
+14. CAS 공통: store/cas.gleam의 공통 헬퍼가 store/hex, store/npm에서 올바르게 사용되는지
+15. 테스트: 대응하는 테스트 파일 존재 여부
 
 ## 보고
 파일별 체크리스트. 이상 없는 항목은 생략.

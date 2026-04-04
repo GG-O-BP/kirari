@@ -74,6 +74,7 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
     at: ["hex", "owner"],
     do: gleam_passthrough_cmd("Manage package ownership", "gleam hex owner"),
   )
+  |> glint.add(at: ["license"], do: license_cmd())
   |> glint.add(at: ["build"], do: build_cmd())
   |> glint.add(at: ["run"], do: run_cmd())
   |> glint.add(at: ["test"], do: test_cmd())
@@ -503,6 +504,16 @@ fn store_verify_cmd() -> glint.Command(Nil) {
   })
 }
 
+fn license_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Audit dependency licenses against policy")
+  glint.command(fn(_named, _args, _flags) {
+    case query.do_license(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // 헬퍼
 // ---------------------------------------------------------------------------
@@ -540,6 +551,7 @@ fn print_help() -> Nil {
   io.println("  hex revert  Revert a Hex release")
   io.println("  hex owner   Manage package ownership")
   io.println("  store verify  Verify cached package integrity")
+  io.println("  license     Audit dependency licenses")
   io.println("  export      Export manifest.toml + package.json")
   io.println("  format      Format source code")
   io.println("  fix         Rewrite deprecated code")
