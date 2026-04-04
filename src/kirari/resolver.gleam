@@ -5,6 +5,7 @@ import gleam/list
 import gleam/option
 import gleam/result
 import gleam/string
+import kirari/platform
 import kirari/registry/hex
 import kirari/registry/npm
 import kirari/security
@@ -29,6 +30,11 @@ pub type VersionInfo {
     published_at: String,
     tarball_url: String,
     dependencies: List(Dependency),
+    os: List(String),
+    cpu: List(String),
+    has_scripts: Bool,
+    signatures: List(#(String, String)),
+    integrity: String,
   )
 }
 
@@ -230,26 +236,30 @@ fn resolve_one(
       // lock hit — 해당 버전의 VersionInfo를 찾아 전이 의존성 반환
       let vi =
         list.find(versions, fn(v) { v.version == pkg.version })
-        |> result.unwrap(
-          VersionInfo(
-            version: pkg.version,
-            published_at: "",
-            tarball_url: "",
-            dependencies: [],
-          ),
-        )
+        |> result.unwrap(VersionInfo(
+          version: pkg.version,
+          published_at: "",
+          tarball_url: "",
+          dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+        ))
       Ok(#(pkg, vi))
     }
     Error(_) -> {
       // 제약 조건 파싱
       use constraint <- result.try(parse_constraint(dep))
-      // 만족하는 버전 필터 + 최고 버전 선택
+      // 만족하는 버전 필터 + 플랫폼 필터 + 최고 버전 선택
       let matching =
         list.filter(versions, fn(vi) {
-          case semver.parse_version(vi.version) {
+          let version_ok = case semver.parse_version(vi.version) {
             Ok(v) -> semver.satisfies(v, constraint)
             Error(_) -> False
           }
+          version_ok && matches_platform(vi, dep.registry)
         })
         |> list.sort(fn(a, b) {
           case
@@ -268,6 +278,8 @@ fn resolve_one(
               version: best.version,
               registry: dep.registry,
               sha256: "",
+              has_scripts: False,
+              platform: Error(Nil),
             ),
             best,
           ))
@@ -380,6 +392,11 @@ fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
               ))
           }
         }),
+        os: [],
+        cpu: [],
+        has_scripts: False,
+        signatures: [],
+        integrity: "",
       )
     }),
   )
@@ -404,7 +421,43 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
             dev: False,
           )
         }),
+        os: v.os,
+        cpu: v.cpu,
+        has_scripts: v.has_scripts,
+        signatures: list.map(v.signatures, fn(s) { #(s.keyid, s.sig) }),
+        integrity: v.integrity,
       )
     }),
   )
+}
+
+// ---------------------------------------------------------------------------
+// 플랫폼 필터링
+// ---------------------------------------------------------------------------
+
+fn matches_platform(vi: VersionInfo, registry: Registry) -> Bool {
+  case registry {
+    Hex -> True
+    Npm ->
+      check_platform_list(vi.os, platform.get_platform_os())
+      && check_platform_list(vi.cpu, platform.get_platform_arch())
+  }
+}
+
+/// 빈 목록이면 모든 플랫폼 허용. "!" prefix는 제외 목록.
+fn check_platform_list(allowed: List(String), current: String) -> Bool {
+  case allowed {
+    [] -> True
+    _ -> {
+      let has_exclude = list.any(allowed, fn(s) { string.starts_with(s, "!") })
+      case has_exclude {
+        True ->
+          // 제외 목록: "!win32"이면 win32만 제외
+          !list.contains(allowed, "!" <> current)
+        False ->
+          // 포함 목록: 현재 플랫폼이 목록에 있어야 함
+          list.contains(allowed, current)
+      }
+    }
+  }
 }

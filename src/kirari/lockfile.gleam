@@ -7,8 +7,8 @@ import gleam/option.{type Option}
 import gleam/result
 import gleam/string
 import kirari/types.{
-  type KirLock, type Registry, type ResolvedPackage, Hex, KirLock, Npm,
-  ResolvedPackage,
+  type KirLock, type Platform, type Registry, type ResolvedPackage, Hex, KirLock,
+  Npm, Platform, ResolvedPackage,
 }
 import simplifile
 import tom.{type Toml}
@@ -74,11 +74,16 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
       use sha256 <- result.try(
         tom.get_string(table, ["sha256"]) |> result.replace_error(Nil),
       )
+      let has_scripts =
+        tom.get_bool(table, ["has_scripts"]) |> result.unwrap(False)
+      let platform = decode_platform(table)
       Ok(ResolvedPackage(
         name: name,
         version: version,
         registry: registry,
         sha256: sha256,
+        has_scripts: has_scripts,
+        platform: platform,
       ))
     }
     _ -> Error(Nil)
@@ -90,6 +95,28 @@ fn parse_registry(s: String) -> Result(Registry, Nil) {
     "hex" -> Ok(Hex)
     "npm" -> Ok(Npm)
     _ -> Error(Nil)
+  }
+}
+
+fn decode_platform(table: Dict(String, Toml)) -> Result(Platform, Nil) {
+  let os = decode_string_array(table, "os")
+  let cpu = decode_string_array(table, "cpu")
+  case os, cpu {
+    [], [] -> Error(Nil)
+    _, _ -> Ok(Platform(os: os, cpu: cpu))
+  }
+}
+
+fn decode_string_array(table: Dict(String, Toml), key: String) -> List(String) {
+  case tom.get_array(table, [key]) {
+    Ok(items) ->
+      list.filter_map(items, fn(item) {
+        case item {
+          tom.String(s) -> Ok(s)
+          _ -> Error(Nil)
+        }
+      })
+    Error(_) -> []
   }
 }
 
@@ -119,20 +146,48 @@ pub fn encode(lock: KirLock) -> String {
 }
 
 fn encode_package(pkg: ResolvedPackage) -> String {
-  // 필드를 사전순: name, registry, sha256, version
-  "[[package]]\n"
-  <> "name = "
-  <> quote(pkg.name)
-  <> "\n"
-  <> "registry = "
-  <> quote(types.registry_to_string(pkg.registry))
-  <> "\n"
-  <> "sha256 = "
-  <> quote(pkg.sha256)
-  <> "\n"
-  <> "version = "
-  <> quote(pkg.version)
-  <> "\n"
+  // 필드를 사전순: cpu, has_scripts, name, os, registry, sha256, version
+  let base =
+    "[[package]]\n"
+    <> encode_platform_cpu(pkg.platform)
+    <> encode_has_scripts(pkg.has_scripts)
+    <> "name = "
+    <> quote(pkg.name)
+    <> "\n"
+    <> encode_platform_os(pkg.platform)
+    <> "registry = "
+    <> quote(types.registry_to_string(pkg.registry))
+    <> "\n"
+    <> "sha256 = "
+    <> quote(pkg.sha256)
+    <> "\n"
+    <> "version = "
+    <> quote(pkg.version)
+    <> "\n"
+  base
+}
+
+fn encode_has_scripts(has_scripts: Bool) -> String {
+  case has_scripts {
+    True -> "has_scripts = true\n"
+    False -> ""
+  }
+}
+
+fn encode_platform_os(platform: Result(Platform, Nil)) -> String {
+  case platform {
+    Ok(Platform(os: os, ..)) if os != [] ->
+      "os = [" <> string.join(list.map(os, quote), ", ") <> "]\n"
+    _ -> ""
+  }
+}
+
+fn encode_platform_cpu(platform: Result(Platform, Nil)) -> String {
+  case platform {
+    Ok(Platform(cpu: cpu, ..)) if cpu != [] ->
+      "cpu = [" <> string.join(list.map(cpu, quote), ", ") <> "]\n"
+    _ -> ""
+  }
 }
 
 fn quote(s: String) -> String {

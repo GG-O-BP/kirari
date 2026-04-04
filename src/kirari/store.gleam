@@ -1,21 +1,21 @@
 //// Content-addressable 패키지 저장소 — ~/.kir/store
+//// Hex와 npm 레지스트리별 전용 하위 모듈로 위임하는 라우터
+//// 타입 정의는 store/types.gleam에 위치 (순환 의존성 방지)
 
 import gleam/result
-import gleam/string
 import kirari/platform
-import kirari/security
-import kirari/tarball
-import kirari/types.{type Registry}
+import kirari/store/hex as hex_store
+import kirari/store/npm as npm_store
+import kirari/store/types as store_types
+import kirari/types.{type Registry, Hex, Npm}
 import simplifile
 
-/// store 모듈 전용 에러 타입
-pub type StoreError {
-  HomeNotFound(detail: String)
-  HashMismatch(expected: String, actual: String)
-  ExtractError(detail: String)
-  IoError(detail: String)
-  PathTraversalError(path: String)
-}
+// 타입 re-export (기존 호출부 호환)
+pub type StoreError =
+  store_types.StoreError
+
+pub type StoreResult =
+  store_types.StoreResult
 
 // ---------------------------------------------------------------------------
 // 저장소 루트
@@ -25,118 +25,58 @@ pub type StoreError {
 pub fn store_root() -> Result(String, StoreError) {
   use home <- result.try(
     platform.get_home_dir()
-    |> result.map_error(fn(e) { HomeNotFound(e) }),
+    |> result.map_error(fn(e) { store_types.HomeNotFound(e) }),
   )
   let root = home <> "/.kir/store"
   use _ <- result.try(
     simplifile.create_directory_all(root)
-    |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
+    |> result.map_error(fn(e) {
+      store_types.IoError(simplifile.describe_error(e))
+    }),
   )
   Ok(root)
 }
 
 // ---------------------------------------------------------------------------
-// 패키지 조회
+// 패키지 조회 (레지스트리별 위임)
 // ---------------------------------------------------------------------------
 
 /// SHA256으로 저장소에 패키지가 있는지 확인
-pub fn has_package(sha256: String) -> Result(Bool, StoreError) {
-  use root <- result.try(store_root())
-  let path = package_dir(root, sha256)
-  case simplifile.is_directory(path) {
-    Ok(True) -> Ok(True)
-    _ -> Ok(False)
+pub fn has_package(
+  sha256: String,
+  registry: Registry,
+) -> Result(Bool, StoreError) {
+  case registry {
+    Hex -> hex_store.has_package(sha256)
+    Npm -> npm_store.has_package(sha256)
   }
 }
 
 /// SHA256으로 저장된 패키지의 경로 반환
-pub fn package_path(sha256: String) -> Result(String, StoreError) {
-  use root <- result.try(store_root())
-  let path = package_dir(root, sha256)
-  case simplifile.is_directory(path) {
-    Ok(True) -> Ok(path)
-    _ -> Error(IoError("package not in store: " <> sha256))
+pub fn package_path(
+  sha256: String,
+  registry: Registry,
+) -> Result(String, StoreError) {
+  case registry {
+    Hex -> hex_store.package_path(sha256)
+    Npm -> npm_store.package_path(sha256)
   }
 }
 
 // ---------------------------------------------------------------------------
-// 패키지 저장
+// 패키지 저장 (레지스트리별 위임)
 // ---------------------------------------------------------------------------
 
 /// tarball 데이터를 검증하고 저장소에 저장
 pub fn store_package(
   data: BitArray,
   expected_sha256: String,
-  _name: String,
-  _version: String,
+  name: String,
+  version: String,
   registry: Registry,
-) -> Result(String, StoreError) {
-  // 1. 해시 검증
-  use _ <- result.try(
-    security.verify_hash(data, expected_sha256)
-    |> result.map_error(fn(e) {
-      case e {
-        security.HashMismatch(expected, actual) ->
-          HashMismatch(expected, actual)
-        _ -> IoError("hash verification failed")
-      }
-    }),
-  )
-
-  use root <- result.try(store_root())
-  let final_path = package_dir(root, expected_sha256)
-
-  // 2. 이미 존재하면 바로 반환
-  case simplifile.is_directory(final_path) {
-    Ok(True) -> Ok(final_path)
-    _ -> {
-      // 3. 임시 디렉토리에 추출
-      use tmp_dir <- result.try(
-        platform.make_temp_dir(root)
-        |> result.map_error(fn(e) { IoError(e) }),
-      )
-      use _ <- result.try(
-        tarball.extract(data, tmp_dir, registry)
-        |> result.map_error(fn(e) {
-          case e {
-            tarball.ExtractError(d) -> ExtractError(d)
-            tarball.IoError(d) -> IoError(d)
-          }
-        }),
-      )
-
-      // 4. 2글자 prefix 디렉토리 생성
-      let prefix_dir = prefix_path(root, expected_sha256)
-      use _ <- result.try(
-        simplifile.create_directory_all(prefix_dir)
-        |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
-      )
-
-      // 5. 원자적 rename
-      case platform.atomic_rename(tmp_dir, final_path) {
-        Ok(_) -> Ok(final_path)
-        Error(_) -> {
-          // 경합 상태: 다른 프로세스가 먼저 저장. tmp 정리 후 기존 경로 반환
-          let _ = simplifile.delete(tmp_dir)
-          case simplifile.is_directory(final_path) {
-            Ok(True) -> Ok(final_path)
-            _ -> Error(IoError("failed to store package"))
-          }
-        }
-      }
-    }
+) -> Result(StoreResult, StoreError) {
+  case registry {
+    Hex -> hex_store.store_package(data, expected_sha256, name, version)
+    Npm -> npm_store.store_package(data, expected_sha256, name, version)
   }
-}
-
-// ---------------------------------------------------------------------------
-// 내부 헬퍼
-// ---------------------------------------------------------------------------
-
-fn package_dir(root: String, sha256: String) -> String {
-  prefix_path(root, sha256) <> "/" <> sha256
-}
-
-fn prefix_path(root: String, sha256: String) -> String {
-  let prefix = string.slice(sha256, 0, 2)
-  root <> "/" <> prefix
 }

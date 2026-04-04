@@ -4,6 +4,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/platform
+import kirari/security
 import kirari/types.{type Registry, Hex, Npm}
 import simplifile
 
@@ -45,10 +46,11 @@ fn extract_hex(data: BitArray, dest: String) -> Result(Nil, TarballError) {
   use contents_data <- result.try(
     simplifile.read_bits(contents_path)
     |> result.map_error(fn(e) {
-      // outer tar가 gzip일 수도 있음 (일부 Hex 미러) — 압축 추출 fallback
       IoError("contents.tar.gz not found: " <> simplifile.describe_error(e))
     }),
   )
+  // 2.5. CHECKSUM 파일 검증 (존재하면)
+  use _ <- result.try(verify_hex_checksum(outer_dir, contents_data))
   // 3. contents.tar.gz를 최종 dest에 추출
   use _ <- result.try(
     simplifile.create_directory_all(dest)
@@ -119,5 +121,28 @@ fn move_files(
       )
       move_files(rest, src_root, dst_root)
     }
+  }
+}
+
+/// Hex tarball 내부 CHECKSUM 파일 검증
+fn verify_hex_checksum(
+  outer_dir: String,
+  contents_data: BitArray,
+) -> Result(Nil, TarballError) {
+  let checksum_path = outer_dir <> "/CHECKSUM"
+  case simplifile.read(checksum_path) {
+    Ok(expected_raw) -> {
+      let expected = string.trim(expected_raw) |> string.lowercase
+      let actual = security.sha256_hex(contents_data)
+      case security.constant_time_equal(actual, expected) {
+        True -> Ok(Nil)
+        False ->
+          Error(ExtractError(
+            "CHECKSUM mismatch: expected " <> expected <> ", got " <> actual,
+          ))
+      }
+    }
+    // CHECKSUM 파일이 없으면 (구버전 tarball) 건너뛰기
+    Error(_) -> Ok(Nil)
   }
 }

@@ -7,10 +7,16 @@ Written in Gleam, targeting Erlang (BEAM).
 ## Features
 
 - **Single config file** — `gleam.toml` is the only manifest, extended with kirari sections
-- **Content-addressable store** — SHA256-based `~/.kir/store` with hardlink installs
+- **Registry-specific store** — Hex and npm packages stored separately under `~/.kir/store/hex/` and `~/.kir/store/npm/` with optimized strategies per ecosystem
+- **Content-addressable store** — SHA256-based with hardlink installs (copy fallback for npm packages with install scripts)
+- **npm metadata sidecar** — `.meta` JSON files track scripts, bin entries, platform constraints, and provenance
 - **Parallel downloads** — concurrent dependency fetching with automatic retry
-- **Deterministic lockfile** — same input always produces the same `kir.lock`
-- **Supply chain security** — `--exclude-newer` and SHA256 hash verification by default
+- **Deterministic lockfile** — same input always produces the same `kir.lock`, with platform-aware fields
+- **Supply chain security** — `--exclude-newer`, SHA256 hash verification, Hex tarball CHECKSUM verification, npm SRI integrity verification, npm Sigstore ECDSA signature verification with registry key caching
+- **npm script policy** — configurable `npm-scripts` policy (deny/allow/allowlist) to block untrusted install scripts
+- **Platform-aware resolution** — respects npm `os` and `cpu` fields, filters incompatible packages during resolution
+- **Bin executables** — auto-creates `node_modules/.bin/` symlinks (Unix) or `.cmd` wrappers (Windows)
+- **Store GC** — `kir clean --store` with immutability-aware retention (Hex: never expires, npm: 90 days)
 - **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
 - **`gleam build` compatible** — gleam ignores kirari sections; auto-generates `manifest.toml` + `packages.toml`
 
@@ -91,7 +97,7 @@ gleam build
 | `kir deps list` | List all dependencies with versions and registries |
 | `kir deps download` | Download dependencies without installing |
 | `kir tree` | Print the unified dependency tree |
-| `kir clean` | Remove `build/` and `node_modules/` directories |
+| `kir clean [--store] [--keep-cache]` | Remove `build/` and `node_modules/`; `--store` runs store GC; `--keep-cache` preserves Gleam compilation cache |
 
 ### Build & Run
 
@@ -145,6 +151,8 @@ These pass through to Gleam directly:
 - `--dev` — Add as dev dependency (for `add`).
 - `--replace` — Replace existing version on Hex (for `publish`).
 - `--yes` — Skip confirmation prompt (for `publish`).
+- `--store` — Also garbage-collect `~/.kir/store/` when cleaning (for `clean`).
+- `--keep-cache` — Preserve Gleam compilation cache when cleaning (for `clean`).
 
 ## gleam.toml
 
@@ -171,9 +179,21 @@ highlight.js = "^11.0.0"
 
 [security]
 exclude-newer = "2026-04-01T00:00:00Z"
+npm-scripts = "deny"
+npm-scripts-allow = ["esbuild", "sharp"]
+provenance = "warn"
 ```
 
 `[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, and `[security]` are kirari extensions that Gleam silently ignores.
+
+### Security options
+
+| Key | Values | Default | Description |
+|-----|--------|---------|-------------|
+| `exclude-newer` | RFC 3339 timestamp | _(none)_ | Exclude versions published after this time |
+| `npm-scripts` | `"deny"`, `"allow"` | `"deny"` | Whether to allow npm install scripts |
+| `npm-scripts-allow` | string array | `[]` | Allowlist of packages whose scripts are permitted (overrides `npm-scripts = "deny"`) |
+| `provenance` | `"ignore"`, `"warn"`, `"require"` | `"warn"` | npm Sigstore provenance verification policy — `warn` logs failures, `require` blocks install |
 
 ## kir.lock
 
@@ -187,7 +207,18 @@ name = "gleam_stdlib"
 registry = "hex"
 sha256 = "702f3bc2..."
 version = "0.71.0"
+
+[[package]]
+has_scripts = true
+name = "esbuild"
+os = ["linux", "darwin", "win32"]
+cpu = ["x64", "arm64"]
+registry = "npm"
+sha256 = "a1b2c3d4..."
+version = "0.21.5"
 ```
+
+Fields `has_scripts`, `os`, and `cpu` are only emitted for npm packages when applicable.
 
 CI usage: `kir install --frozen` fails if the lock doesn't match resolved dependencies.
 
@@ -205,10 +236,14 @@ gleam.toml (single source of truth)
     ▼
 kir install
     │
+    ├── Resolve (platform-aware os/cpu filtering)
+    ├── Download → Verify (SHA256 + SRI integrity + Sigstore ECDSA)
+    ├── Store (Hex → ~/.kir/store/hex/, npm → ~/.kir/store/npm/ + .meta)
+    ├── Install (Hex: hardlink, npm: hardlink or copy based on scripts)
+    ├── Bin link (Unix: symlink, Windows: .cmd wrapper)
     ├── kir.lock                    ← deterministic lockfile
     ├── manifest.toml               ← auto-generated for gleam build
-    ├── build/packages/packages.toml ← auto-generated for gleam build
-    └── ~/.kir/store/ → build/packages/ (hardlinks)
+    └── build/packages/packages.toml ← auto-generated for gleam build
 
 gleam build (reads gleam.toml + manifest.toml, skips download)
 ```
@@ -227,9 +262,16 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Lockfile hash** | `outer_checksum` (SHA256, from Hex registry) | `sha256` (SHA256, computed locally) |
 | **npm dependency management** | Not managed; requires separate `package.json` and npm/yarn/pnpm | Native; declared in `gleam.toml [npm-dependencies]`, resolved alongside Hex |
 | **Dependency resolution** | PubGrub (backtracking) | Greedy (highest compatible, no backtracking, diamond conflict detection) |
-| **Local package store** | Downloads to `build/packages/` per project | Content-addressable `~/.kir/store/` shared across projects |
-| **Installation method** | Copy | Hardlink with copy fallback |
+| **Local package store** | Downloads to `build/packages/` per project | Content-addressable `~/.kir/store/` shared across projects, registry-separated (`hex/`, `npm/`) |
+| **Installation method** | Copy | Hardlink (immutable packages) or copy (npm with scripts) |
+| **npm bin executables** | Not managed | Auto-creates `node_modules/.bin/` symlinks (Unix) or `.cmd` wrappers (Windows) |
+| **Platform-aware resolution** | Not available | Respects npm `os`/`cpu` fields |
 | **`exclude-newer`** | Not available | `[security] exclude-newer` or `--exclude-newer` flag |
+| **npm script policy** | Not available | `[security] npm-scripts` with deny/allow/allowlist |
+| **Provenance verification** | Not available | npm Sigstore ECDSA signature verification with registry key caching (warn/require/ignore) |
+| **SRI integrity** | Not available | Verifies npm `dist.integrity` field (sha256/sha512) |
+| **Hex CHECKSUM** | Not available | Verifies `CHECKSUM` inside Hex tarballs |
+| **Store GC** | Not available | `kir clean --store` — Hex immutable (never expires), npm 90-day retention |
 | **Dependency tree** | `gleam deps tree` | `kir tree` |
 | **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
 | **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` + all gleam export subcommands via passthrough |
@@ -248,18 +290,24 @@ src/kirari/
   semver.gleam            SemVer parsing, Hex + npm constraint matching
   resolver.gleam          Dependency resolution with transitive deps + diamond conflict detection
   lockfile.gleam          kir.lock read/write
-  pipeline.gleam          Download → store → install orchestration
-  security.gleam          SHA256, path validation, exclude-newer
+  pipeline.gleam          Download → verify → store → install orchestration
+  security.gleam          SHA256, path validation, exclude-newer, SRI integrity, Sigstore ECDSA
   registry/hex.gleam      Hex.pm API client
-  registry/npm.gleam      npm registry API client
-  store.gleam             Content-addressable package store
-  tarball.gleam           Hex double-tar + npm tgz extraction
-  installer.gleam         Hardlink/copy installation
-  platform.gleam          Erlang FFI wrappers
+  registry/npm.gleam      npm registry API client + signing key fetch/cache
+  store.gleam             Store router — delegates to registry-specific modules
+  store/
+    types.gleam           StoreError, StoreResult shared types
+    hex.gleam             Hex-specific CAS store (~/.kir/store/hex/)
+    npm.gleam             npm-specific CAS store (~/.kir/store/npm/) + metadata sidecar
+    metadata.gleam        npm .meta JSON sidecar read/write
+    gc.gleam              Store GC (Hex: immutable/never expires, npm: 90-day retention)
+  tarball.gleam           Hex double-tar + CHECKSUM verification, npm tgz extraction
+  installer.gleam         Registry-aware installation (hardlink/copy) + bin symlinks/cmd wrappers
+  platform.gleam          Erlang FFI wrappers (tar, hardlink, symlink, crypto, platform detection)
   tree.gleam              Dependency tree rendering
   export.gleam            manifest.toml + packages.toml + package.json export
   ffi.gleam               Bare import detection in .mjs files
-src/kirari_ffi.erl        Erlang FFI (tar, hardlink, rename)
+src/kirari_ffi.erl        Erlang FFI (tar, hardlink, rename, symlink, ECDSA, platform)
 ```
 
 ## Development

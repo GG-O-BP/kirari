@@ -9,7 +9,14 @@
     make_temp_dir/1,
     run_command/1,
     exec_command/1,
-    app_version/0
+    app_version/0,
+    get_platform_os/0,
+    get_platform_arch/0,
+    get_file_mtime/1,
+    make_symlink/2,
+    chmod_executable/1,
+    verify_ecdsa_signature/3,
+    get_current_timestamp/0
 ]).
 
 %% tar/tgz 압축 해제
@@ -129,3 +136,71 @@ stream_port(Port) ->
         {Port, {exit_status, Code}} ->
             Code
     end.
+
+%% 플랫폼 OS 감지
+get_platform_os() ->
+    case os:type() of
+        {win32, _} -> <<"win32">>;
+        {unix, darwin} -> <<"darwin">>;
+        {unix, linux} -> <<"linux">>;
+        {unix, freebsd} -> <<"freebsd">>;
+        {unix, Other} -> atom_to_binary(Other, utf8);
+        _ -> <<"unknown">>
+    end.
+
+%% 플랫폼 아키텍처 감지
+get_platform_arch() ->
+    Arch = erlang:system_info(system_architecture),
+    case Arch of
+        "x86_64" ++ _ -> <<"x64">>;
+        "aarch64" ++ _ -> <<"arm64">>;
+        "arm" ++ _ -> <<"arm">>;
+        "i686" ++ _ -> <<"ia32">>;
+        "i386" ++ _ -> <<"ia32">>;
+        _ -> list_to_binary(Arch)
+    end.
+
+%% 파일 수정 시각 (Unix 초)
+get_file_mtime(Path) when is_binary(Path) ->
+    case filelib:last_modified(binary_to_list(Path)) of
+        0 -> {error, <<"not found">>};
+        DateTime ->
+            Seconds = calendar:datetime_to_gregorian_seconds(DateTime)
+                    - calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}}),
+            {ok, Seconds}
+    end.
+
+%% 심볼릭 링크 생성
+make_symlink(Target, Link) when is_binary(Target), is_binary(Link) ->
+    case file:make_symlink(binary_to_list(Target), binary_to_list(Link)) of
+        ok -> {ok, nil};
+        {error, Reason} -> {error, atom_to_binary(Reason, utf8)}
+    end.
+
+%% 실행 권한 설정 (Unix: 755)
+chmod_executable(Path) when is_binary(Path) ->
+    case file:change_mode(binary_to_list(Path), 8#755) of
+        ok -> {ok, nil};
+        {error, Reason} -> {error, atom_to_binary(Reason, utf8)}
+    end.
+
+%% ECDSA 서명 검증 (npm Sigstore용)
+verify_ecdsa_signature(Data, SignatureB64, PublicKeyPem) when
+    is_binary(Data), is_binary(SignatureB64), is_binary(PublicKeyPem) ->
+    try
+        Sig = base64:decode(SignatureB64),
+        [PemEntry | _] = public_key:pem_decode(PublicKeyPem),
+        PubKey = public_key:pem_entry_decode(PemEntry),
+        case public_key:verify(Data, sha256, Sig, PubKey) of
+            true -> {ok, nil};
+            false -> {error, <<"signature mismatch">>}
+        end
+    catch
+        _:Reason -> {error, list_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+%% 현재 시각 RFC 3339 형식
+get_current_timestamp() ->
+    {{Y,Mo,D},{H,Mi,S}} = calendar:universal_time(),
+    list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ",
+                                 [Y,Mo,D,H,Mi,S])).

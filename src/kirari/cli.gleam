@@ -15,6 +15,7 @@ import kirari/migrate
 import kirari/pipeline
 import kirari/platform
 import kirari/resolver
+import kirari/store/gc
 import kirari/tree
 import kirari/types.{
   type Dependency, type KirConfig, Dependency, Hex, KirConfig, Npm,
@@ -201,6 +202,8 @@ fn format_error(error: KirError) -> String {
           "download failed: " <> name <> "@" <> ver <> " — " <> d
         pipeline.StoreErr(se) -> "store error: " <> string.inspect(se)
         pipeline.InstallErr(ie) -> "install error: " <> string.inspect(ie)
+        pipeline.ProvenanceErr(name, detail) ->
+          "provenance verification failed: " <> name <> " — " <> detail
       }
     ExportErr(e) ->
       case e {
@@ -404,7 +407,21 @@ fn install_then_gleam_cmd(help: String, cmd: String) -> glint.Command(Nil) {
 
 fn clean_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Remove build artifacts and store cache")
-  glint.command(fn(_named, _args, _flags) { do_clean(".") })
+  use store_flag <- glint.flag(
+    glint.bool_flag("store")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Also garbage-collect the global package store"),
+  )
+  use keep_cache_flag <- glint.flag(
+    glint.bool_flag("keep-cache")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Keep Gleam compilation cache (_gleam_artefacts)"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let clean_store = store_flag(flags) |> result.unwrap(False)
+    let keep_cache = keep_cache_flag(flags) |> result.unwrap(False)
+    do_clean(".", clean_store, keep_cache)
+  })
 }
 
 fn publish_cmd() -> glint.Command(Nil) {
@@ -531,7 +548,7 @@ fn do_install(
     ts ->
       types.KirConfig(
         ..cfg,
-        security: types.SecurityConfig(exclude_newer: Ok(ts)),
+        security: types.SecurityConfig(..cfg.security, exclude_newer: Ok(ts)),
       )
   }
   let existing_lock =
@@ -565,10 +582,11 @@ fn do_install(
     False -> {
       // 다운로드 → 저장 → 설치
       io.println("Downloading and installing...")
-      use installed <- result.try(
-        pipeline.run(resolve_result, dir)
+      use pipeline_result <- result.try(
+        pipeline.run(resolve_result, dir, cfg.security)
         |> result.map_error(PipelineErr),
       )
+      let installed = pipeline_result.packages
       // lockfile 기록 (실제 sha256 포함)
       let lock = lockfile.from_packages(installed)
       use _ <- result.try(
@@ -603,11 +621,11 @@ fn do_install_quiet(dir: String) -> Result(Nil, KirError) {
     resolver.resolve_full(cfg, existing_lock)
     |> result.map_error(ResolveErr),
   )
-  use installed <- result.try(
-    pipeline.run(resolve_result, dir)
+  use pipeline_result <- result.try(
+    pipeline.run(resolve_result, dir, cfg.security)
     |> result.map_error(PipelineErr),
   )
-  let lock = lockfile.from_packages(installed)
+  let lock = lockfile.from_packages(pipeline_result.packages)
   use _ <- result.try(
     lockfile.write(lock, dir)
     |> result.map_error(LockErr),
@@ -634,10 +652,11 @@ fn do_update(dir: String) -> Result(Nil, KirError) {
     <> " packages",
   )
   io.println("Downloading and installing...")
-  use installed <- result.try(
-    pipeline.run(resolve_result, dir)
+  use pipeline_result <- result.try(
+    pipeline.run(resolve_result, dir, cfg.security)
     |> result.map_error(PipelineErr),
   )
+  let installed = pipeline_result.packages
   let lock = lockfile.from_packages(installed)
   use _ <- result.try(
     lockfile.write(lock, dir)
@@ -804,11 +823,11 @@ fn do_deps_download(dir: String) -> Result(Nil, KirError) {
     |> result.map_error(ResolveErr),
   )
   io.println("Downloading...")
-  use installed <- result.try(
-    pipeline.run(resolve_result, dir)
+  use pipeline_result <- result.try(
+    pipeline.run(resolve_result, dir, cfg.security)
     |> result.map_error(PipelineErr),
   )
-  let lock = lockfile.from_packages(installed)
+  let lock = lockfile.from_packages(pipeline_result.packages)
   use _ <- result.try(
     lockfile.write(lock, dir)
     |> result.map_error(LockErr),
@@ -816,16 +835,43 @@ fn do_deps_download(dir: String) -> Result(Nil, KirError) {
   io.println(
     ansi.green("Downloaded")
     <> " "
-    <> int.to_string(list.length(installed))
+    <> int.to_string(list.length(pipeline_result.packages))
     <> " packages",
   )
   Ok(Nil)
 }
 
-fn do_clean(dir: String) -> Nil {
-  let _ = simplifile.delete(dir <> "/build")
+fn do_clean(dir: String, clean_store: Bool, keep_cache: Bool) -> Nil {
+  case keep_cache {
+    False -> {
+      let _ = simplifile.delete(dir <> "/build")
+      Nil
+    }
+    True -> {
+      // build/ 삭제하되 _gleam_artefacts/ 보존은 복잡하므로
+      // build/packages만 삭제
+      let _ = simplifile.delete(dir <> "/build/packages")
+      Nil
+    }
+  }
   let _ = simplifile.delete(dir <> "/node_modules")
   io.println(ansi.green("Cleaned") <> " build artifacts")
+  case clean_store {
+    True ->
+      case gc.gc_all() {
+        Ok(#(hex_result, npm_result)) ->
+          io.println(
+            ansi.green("Store GC:")
+            <> " removed "
+            <> int.to_string(hex_result.removed_count)
+            <> " hex, "
+            <> int.to_string(npm_result.removed_count)
+            <> " npm packages",
+          )
+        Error(_) -> io.println("Store GC failed")
+      }
+    False -> Nil
+  }
 }
 
 fn do_publish(dir: String, replace: Bool, yes: Bool) -> Nil {

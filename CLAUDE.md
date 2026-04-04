@@ -20,10 +20,12 @@ kir.toml은 존재하지 않는다.
 ## 설계 원칙
 
 1. gleam.toml이 유일한 정본 — manifest.toml, packages.toml은 자동 생성 산출물
-2. content-addressable store (~/.kir/store) — SHA256 기반, 하드링크 설치
-3. 병렬 다운로드 — gleam/erlang/process 기반, 재시도 3회
-4. 결정론적 lockfile — 동일 입력이면 동일 kir.lock 출력
-5. 공급망 보안 기본 강제 — --exclude-newer, SHA256 해시 검증
+2. 레지스트리별 분리 store — ~/.kir/store/hex/, ~/.kir/store/npm/ 각각 최적화
+3. Hex: trust-and-cache (불변 레지스트리, 영구 캐시, 항상 hardlink, CHECKSUM 검증)
+4. npm: verify-and-guard (메타데이터 사이드카, 스크립트 정책, 플랫폼 인식, Sigstore 검증)
+5. 병렬 다운로드 — gleam/erlang/process 기반, 재시도 3회
+6. 결정론적 lockfile — 동일 입력이면 동일 kir.lock 출력, 플랫폼 필드 포함
+7. 공급망 보안 기본 강제 — --exclude-newer, SHA256, Hex CHECKSUM, npm SRI integrity, npm Sigstore ECDSA (키 캐시), 스크립트 차단
 
 ## 명령어
 
@@ -37,7 +39,7 @@ kir.toml은 존재하지 않는다.
 | `kir deps list` | 의존성 목록 출력 |
 | `kir deps download` | 의존성 다운로드 (설치 없이) |
 | `kir tree` | 통합 의존성 트리 출력 |
-| `kir clean` | build/ + node_modules/ 삭제 |
+| `kir clean [--store] [--keep-cache]` | build/ + node_modules/ 삭제, --store로 GC, --keep-cache로 컴파일 캐시 보존 |
 | `kir build/run/test/check/dev` | 의존성 동기화 후 gleam 명령어 실행 |
 | `kir format/fix/new/shell/lsp` | gleam 명령어 직접 위임 |
 | `kir docs build/publish/remove` | gleam docs 위임 |
@@ -51,8 +53,16 @@ kir.toml은 존재하지 않는다.
 소스는 src/kirari/ 아래에 모듈별 파일로 배치. 진입점은 src/kirari.gleam.
 
 주요 모듈: cli, config, migrate, lockfile, resolver, pipeline,
-registry/hex, registry/npm, store, tarball, installer,
+registry/hex, registry/npm, tarball, installer,
 ffi, security, tree, export, types, platform, semver
+
+store 모듈 (레지스트리별 분리):
+- store.gleam — 라우터 (hex/npm 위임, 타입 re-export)
+- store/types.gleam — StoreError, StoreResult 공유 타입
+- store/hex.gleam — Hex 전용 CAS (~/.kir/store/hex/)
+- store/npm.gleam — npm 전용 CAS (~/.kir/store/npm/) + .meta 사이드카
+- store/metadata.gleam — npm .meta JSON 읽기/쓰기
+- store/gc.gleam — GC (Hex: 불변/never expires, npm: 90일 보존)
 
 ## Gleam 규칙
 

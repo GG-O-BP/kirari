@@ -191,7 +191,38 @@ fn decode_security_section(doc: Dict(String, Toml)) -> SecurityConfig {
   let exclude_newer =
     tom.get_string(doc, ["security", "exclude-newer"])
     |> result.map_error(fn(_) { Nil })
-  SecurityConfig(exclude_newer: exclude_newer)
+  let npm_scripts = case tom.get_string(doc, ["security", "npm-scripts"]) {
+    Ok("allow") -> types.AllowAll
+    Ok("deny") -> types.DenyAll
+    _ -> types.DenyAll
+  }
+  let npm_scripts = case tom.get_array(doc, ["security", "npm-scripts-allow"]) {
+    Ok(items) -> {
+      let names =
+        list.filter_map(items, fn(item) {
+          case item {
+            tom.String(s) -> Ok(s)
+            _ -> Error(Nil)
+          }
+        })
+      case names {
+        [] -> npm_scripts
+        _ -> types.AllowList(packages: names)
+      }
+    }
+    Error(_) -> npm_scripts
+  }
+  let provenance = case tom.get_string(doc, ["security", "provenance"]) {
+    Ok("ignore") -> types.ProvenanceIgnore
+    Ok("warn") -> types.ProvenanceWarn
+    Ok("require") -> types.ProvenanceRequire
+    _ -> types.ProvenanceWarn
+  }
+  SecurityConfig(
+    exclude_newer: exclude_newer,
+    npm_scripts: npm_scripts,
+    provenance: provenance,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -305,9 +336,33 @@ fn encode_dep_section(
 }
 
 fn encode_security_section(sec: SecurityConfig) -> String {
-  case sec.exclude_newer {
-    Ok(ts) -> "[security]\nexclude-newer = " <> quote(ts) <> "\n"
-    Error(_) -> ""
+  let lines = []
+  let lines = case sec.exclude_newer {
+    Ok(ts) -> ["exclude-newer = " <> quote(ts), ..lines]
+    Error(_) -> lines
+  }
+  // DenyAll이 기본값이므로 생략
+  let lines = case sec.npm_scripts {
+    types.AllowAll -> ["npm-scripts = " <> quote("allow"), ..lines]
+    types.DenyAll -> lines
+    types.AllowList(_) -> ["npm-scripts = " <> quote("deny"), ..lines]
+  }
+  let lines = case sec.npm_scripts {
+    types.AllowList(packages) -> {
+      let quoted = list.map(packages, quote) |> string.join(", ")
+      ["npm-scripts-allow = [" <> quoted <> "]", ..lines]
+    }
+    _ -> lines
+  }
+  // ProvenanceWarn이 기본값이므로 생략
+  let lines = case sec.provenance {
+    types.ProvenanceIgnore -> ["provenance = " <> quote("ignore"), ..lines]
+    types.ProvenanceWarn -> lines
+    types.ProvenanceRequire -> ["provenance = " <> quote("require"), ..lines]
+  }
+  case lines {
+    [] -> ""
+    _ -> "[security]\n" <> string.join(list.reverse(lines), "\n") <> "\n"
   }
 }
 

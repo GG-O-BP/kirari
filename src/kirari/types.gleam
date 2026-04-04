@@ -60,7 +60,14 @@ pub type ResolvedPackage {
     version: String,
     registry: Registry,
     sha256: String,
+    has_scripts: Bool,
+    platform: Result(Platform, Nil),
   )
+}
+
+/// npm 패키지의 플랫폼 제약
+pub type Platform {
+  Platform(os: List(String), cpu: List(String))
 }
 
 /// lockfile 정렬용 비교 — 이름 사전순, 같으면 레지스트리 사전순
@@ -79,14 +86,36 @@ pub fn compare_packages(a: ResolvedPackage, b: ResolvedPackage) -> Order {
 // SecurityConfig
 // ---------------------------------------------------------------------------
 
+/// npm 스크립트 실행 정책
+pub type ScriptPolicy {
+  DenyAll
+  AllowAll
+  AllowList(packages: List(String))
+}
+
+/// npm provenance 검증 정책
+pub type ProvenancePolicy {
+  ProvenanceIgnore
+  ProvenanceWarn
+  ProvenanceRequire
+}
+
 /// [security] 섹션
 pub type SecurityConfig {
-  SecurityConfig(exclude_newer: Result(String, Nil))
+  SecurityConfig(
+    exclude_newer: Result(String, Nil),
+    npm_scripts: ScriptPolicy,
+    provenance: ProvenancePolicy,
+  )
 }
 
 /// 기본 보안 설정 (제한 없음)
 pub fn default_security_config() -> SecurityConfig {
-  SecurityConfig(exclude_newer: Error(Nil))
+  SecurityConfig(
+    exclude_newer: Error(Nil),
+    npm_scripts: DenyAll,
+    provenance: ProvenanceWarn,
+  )
 }
 
 // ---------------------------------------------------------------------------

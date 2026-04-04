@@ -2,7 +2,7 @@ import gleam/string
 import gleeunit
 import kirari/export
 import kirari/types.{
-  type KirConfig, Dependency, Hex, KirConfig, Npm, PackageInfo, SecurityConfig,
+  type KirConfig, Dependency, Hex, KirConfig, Npm, PackageInfo,
 }
 
 pub fn main() -> Nil {
@@ -44,7 +44,7 @@ fn sample_config() -> KirConfig {
       ),
     ],
     npm_dev_deps: [],
-    security: SecurityConfig(exclude_newer: Error(Nil)),
+    security: types.default_security_config(),
     path_deps: [],
     path_dev_deps: [],
   )

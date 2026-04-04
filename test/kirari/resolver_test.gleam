@@ -3,7 +3,7 @@ import gleeunit
 import kirari/resolver.{type ResolverError, type VersionInfo, VersionInfo}
 import kirari/types.{
   type KirConfig, type Registry, Dependency, Hex, KirConfig, KirLock, Npm,
-  PackageInfo, ResolvedPackage, SecurityConfig,
+  PackageInfo, ResolvedPackage,
 }
 
 pub fn main() -> Nil {
@@ -26,18 +26,33 @@ fn mock_fetch(
           version: "0.44.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
         VersionInfo(
           tarball_url: "",
           version: "0.45.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
         VersionInfo(
           tarball_url: "",
           version: "1.0.0",
           published_at: "2025-01-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
       ])
     "gleam_json", Hex ->
@@ -54,6 +69,11 @@ fn mock_fetch(
               dev: False,
             ),
           ],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
       ])
     "highlight.js", Npm ->
@@ -63,18 +83,33 @@ fn mock_fetch(
           version: "11.0.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
         VersionInfo(
           tarball_url: "",
           version: "11.9.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
         VersionInfo(
           tarball_url: "",
           version: "12.0.0",
           published_at: "2025-01-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
       ])
     // 다이아몬드 충돌 테스트용
@@ -92,6 +127,11 @@ fn mock_fetch(
               dev: False,
             ),
           ],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
       ])
     "pkg_b", Hex ->
@@ -108,6 +148,11 @@ fn mock_fetch(
               dev: False,
             ),
           ],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
       ])
     "pkg_shared", Hex ->
@@ -117,12 +162,22 @@ fn mock_fetch(
           version: "1.0.0",
           published_at: "2024-01-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
         VersionInfo(
           tarball_url: "",
           version: "2.0.0",
           published_at: "2024-06-01T00:00:00Z",
           dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
         ),
       ])
     _, _ -> Error(resolver.PackageNotFound(name, registry))
@@ -143,7 +198,7 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
     hex_dev_deps: list.filter(deps, fn(d) { d.registry == Hex && d.dev }),
     npm_deps: list.filter(deps, fn(d) { d.registry == Npm && !d.dev }),
     npm_dev_deps: list.filter(deps, fn(d) { d.registry == Npm && d.dev }),
-    security: SecurityConfig(exclude_newer: Error(Nil)),
+    security: types.default_security_config(),
     path_deps: [],
     path_dev_deps: [],
   )
@@ -249,6 +304,8 @@ pub fn resolve_prefers_lock_test() {
         version: "0.44.0",
         registry: Hex,
         sha256: "abc",
+        has_scripts: False,
+        platform: Error(Nil),
       ),
     ])
   let assert Ok(resolved) = resolver.resolve_with(config, Ok(lock), mock_fetch)
@@ -272,7 +329,10 @@ pub fn resolve_exclude_newer_test() {
           dev: False,
         ),
       ]),
-      security: SecurityConfig(exclude_newer: Ok("2024-08-01T00:00:00Z")),
+      security: types.SecurityConfig(
+        ..types.default_security_config(),
+        exclude_newer: Ok("2024-08-01T00:00:00Z"),
+      ),
     )
   let assert Ok(resolved) =
     resolver.resolve_with(config, Error(Nil), mock_fetch)

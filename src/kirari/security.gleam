@@ -2,10 +2,13 @@
 
 import gleam/bit_array
 import gleam/crypto
+import gleam/list
 import gleam/order
 import gleam/result
 import gleam/string
 import gleam/time/timestamp
+import kirari/platform
+import kirari/types
 
 /// security 모듈 전용 에러 타입
 pub type SecurityError {
@@ -127,4 +130,118 @@ pub fn is_before_cutoff(
     |> result.map_error(fn(_) { InvalidTimestamp(cutoff) }),
   )
   Ok(timestamp.compare(pub_ts, cut_ts) == order.Lt)
+}
+
+// ---------------------------------------------------------------------------
+// npm Sigstore 서명 검증
+// ---------------------------------------------------------------------------
+
+/// 서명 검증 결과
+pub type SignatureVerification {
+  Verified
+  NoSignature
+  VerificationFailed(detail: String)
+}
+
+/// npm 레지스트리 서명 검증 (ECDSA, 단일 서명)
+pub fn verify_npm_signature(
+  data: BitArray,
+  signature_b64: String,
+  public_key_pem: String,
+) -> SignatureVerification {
+  case platform.verify_ecdsa_signature(data, signature_b64, public_key_pem) {
+    Ok(_) -> Verified
+    Error(detail) -> VerificationFailed(detail)
+  }
+}
+
+/// npm 패키지 서명 검증 (정책 적용)
+pub fn verify_npm_provenance(
+  data: BitArray,
+  signatures: List(#(String, String)),
+  keys: List(#(String, String)),
+  policy: types.ProvenancePolicy,
+) -> Result(Nil, String) {
+  case policy {
+    types.ProvenanceIgnore -> Ok(Nil)
+    _ ->
+      case signatures {
+        [] ->
+          case policy {
+            types.ProvenanceRequire -> Error("no signatures found")
+            _ -> Ok(Nil)
+          }
+        _ -> verify_any_signature(data, signatures, keys, policy)
+      }
+  }
+}
+
+fn verify_any_signature(
+  data: BitArray,
+  signatures: List(#(String, String)),
+  keys: List(#(String, String)),
+  policy: types.ProvenancePolicy,
+) -> Result(Nil, String) {
+  let verified =
+    list.any(signatures, fn(sig) {
+      let #(keyid, sig_b64) = sig
+      case list.find(keys, fn(k) { k.0 == keyid }) {
+        Ok(#(_, pem)) ->
+          case verify_npm_signature(data, sig_b64, pem) {
+            Verified -> True
+            _ -> False
+          }
+        Error(_) -> False
+      }
+    })
+  case verified {
+    True -> Ok(Nil)
+    False ->
+      case policy {
+        types.ProvenanceRequire -> Error("all signature verifications failed")
+        _ -> Ok(Nil)
+      }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SRI integrity 검증
+// ---------------------------------------------------------------------------
+
+/// npm SRI integrity 검증 (sha512-... 또는 sha256-... 형식)
+pub fn verify_sri_integrity(
+  data: BitArray,
+  sri: String,
+) -> Result(Nil, SecurityError) {
+  case sri {
+    "" -> Ok(Nil)
+    "sha512-" <> expected_b64 -> {
+      let actual = crypto.hash(crypto.Sha512, data)
+      let expected = bit_array.base64_decode(expected_b64)
+      case expected {
+        Ok(expected_bytes) ->
+          case crypto.secure_compare(actual, expected_bytes) {
+            True -> Ok(Nil)
+            False ->
+              Error(HashMismatch(expected: sri, actual: "sha512 mismatch"))
+          }
+        Error(_) -> Error(HashMismatch(expected: sri, actual: "invalid base64"))
+      }
+    }
+    "sha256-" <> expected_b64 -> {
+      let actual = crypto.hash(crypto.Sha256, data)
+      let expected = bit_array.base64_decode(expected_b64)
+      case expected {
+        Ok(expected_bytes) ->
+          case crypto.secure_compare(actual, expected_bytes) {
+            True -> Ok(Nil)
+            False ->
+              Error(HashMismatch(expected: sri, actual: "sha256 mismatch"))
+          }
+        Error(_) -> Error(HashMismatch(expected: sri, actual: "invalid base64"))
+      }
+    }
+    // 알 수 없는 SRI 형식은 건너뛰기
+    _ -> Ok(Nil)
+  }
 }

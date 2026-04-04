@@ -4,7 +4,7 @@ import gleeunit
 import kirari/tree
 import kirari/types.{
   type KirConfig, type KirLock, Dependency, Hex, KirConfig, KirLock, Npm,
-  PackageInfo, ResolvedPackage, SecurityConfig,
+  PackageInfo, ResolvedPackage,
 }
 
 pub fn main() -> Nil {
@@ -39,7 +39,7 @@ fn test_config() -> KirConfig {
       ),
     ],
     npm_dev_deps: [],
-    security: SecurityConfig(exclude_newer: Error(Nil)),
+    security: types.default_security_config(),
     path_deps: [],
     path_dev_deps: [],
   )
@@ -52,12 +52,16 @@ fn test_lock() -> KirLock {
       version: "0.44.0",
       registry: Hex,
       sha256: "aaa",
+      has_scripts: False,
+      platform: Error(Nil),
     ),
     ResolvedPackage(
       name: "highlight.js",
       version: "11.9.0",
       registry: Npm,
       sha256: "bbb",
+      has_scripts: False,
+      platform: Error(Nil),
     ),
   ])
 }
@@ -95,7 +99,7 @@ pub fn empty_tree_test() {
       hex_dev_deps: [],
       npm_deps: [],
       npm_dev_deps: [],
-      security: SecurityConfig(exclude_newer: Error(Nil)),
+      security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
     )

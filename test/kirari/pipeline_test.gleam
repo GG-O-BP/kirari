@@ -2,10 +2,12 @@ import gleam/dict
 import gleam/list
 import gleeunit
 import kirari/pipeline
+import kirari/platform
 import kirari/resolver.{ResolveResult}
 import kirari/security
 import kirari/store
 import kirari/types.{Hex, ResolvedPackage}
+import simplifile
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -26,12 +28,16 @@ pub fn run_skips_cached_packages_test() {
       version: "1.0.0",
       registry: Hex,
       sha256: hash,
+      has_scripts: False,
+      platform: Error(Nil),
     )
   let resolve_result = ResolveResult(packages: [pkg], version_infos: dict.new())
+  let security = types.default_security_config()
   // pipeline.run은 이미 store에 있으므로 다운로드 없이 성공
-  let assert Ok(installed) = pipeline.run(resolve_result, test_project_dir())
-  assert list.length(installed) == 1
-  let assert [p] = installed
+  let assert Ok(result) =
+    pipeline.run(resolve_result, test_project_dir(), security)
+  assert list.length(result.packages) == 1
+  let assert [p] = result.packages
   assert p.sha256 == hash
   // 정리
   let _ = simplifile.delete(test_project_dir())
@@ -43,8 +49,10 @@ pub fn run_skips_cached_packages_test() {
 
 pub fn run_empty_packages_test() {
   let resolve_result = ResolveResult(packages: [], version_infos: dict.new())
-  let assert Ok(installed) = pipeline.run(resolve_result, test_project_dir())
-  assert installed == []
+  let security = types.default_security_config()
+  let assert Ok(result) =
+    pipeline.run(resolve_result, test_project_dir(), security)
+  assert result.packages == []
   let _ = simplifile.delete(test_project_dir())
 }
 
@@ -58,9 +66,6 @@ fn test_project_dir() -> String {
     Error(_) -> "/tmp/test-pipeline-project"
   }
 }
-
-import kirari/platform
-import simplifile
 
 @external(erlang, "kirari_test_ffi", "create_hex_test_tarball")
 fn create_hex_test_tarball() -> BitArray

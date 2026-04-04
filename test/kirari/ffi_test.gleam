@@ -1,7 +1,7 @@
 import gleam/list
 import gleeunit
 import kirari/ffi as ffi_detect
-import kirari/types.{Dependency, KirConfig, Npm, PackageInfo, SecurityConfig}
+import kirari/types.{Dependency, KirConfig, Npm, PackageInfo}
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -38,7 +38,7 @@ pub fn find_undeclared_filters_declared_test() {
         ),
       ],
       npm_dev_deps: [],
-      security: SecurityConfig(exclude_newer: Error(Nil)),
+      security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
     )

@@ -35,7 +35,7 @@ pub fn install_package(
   project_dir: String,
 ) -> Result(Nil, InstallerError) {
   use source_path <- result.try(
-    store.package_path(package.sha256)
+    store.package_path(package.sha256, package.registry)
     |> result.map_error(StoreErr),
   )
   let target = install_target(package, project_dir)
@@ -45,7 +45,30 @@ pub fn install_package(
     simplifile.create_directory_all(target)
     |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
   )
-  copy_dir_contents(source_path, target)
+  case install_mode(package) {
+    HardlinkMode -> hardlink_dir_contents(source_path, target)
+    CopyMode -> copy_dir_contents(source_path, target)
+  }
+}
+
+/// npm 패키지의 bin 심볼릭 링크 생성
+pub fn link_bins(
+  bin_entries: List(#(String, List(#(String, String)))),
+  project_dir: String,
+) -> Result(Nil, InstallerError) {
+  let bin_dir = project_dir <> "/node_modules/.bin"
+  // 기존 .bin 디렉토리 정리 후 재생성
+  let _ = simplifile.delete(bin_dir)
+  case bin_entries {
+    [] -> Ok(Nil)
+    _ -> {
+      use _ <- result.try(
+        simplifile.create_directory_all(bin_dir)
+        |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
+      )
+      create_bin_links(bin_entries, project_dir, bin_dir)
+    }
+  }
 }
 
 /// 더 이상 필요 없는 패키지 정리
@@ -76,6 +99,22 @@ pub fn clean_stale(
 // 내부 구현
 // ---------------------------------------------------------------------------
 
+type InstallMode {
+  HardlinkMode
+  CopyMode
+}
+
+fn install_mode(package: ResolvedPackage) -> InstallMode {
+  case package.registry {
+    Hex -> HardlinkMode
+    Npm ->
+      case package.has_scripts {
+        True -> CopyMode
+        False -> HardlinkMode
+      }
+  }
+}
+
 fn install_each(
   packages: List(ResolvedPackage),
   project_dir: String,
@@ -105,37 +144,118 @@ fn ensure_dirs(project_dir: String) -> Result(Nil, InstallerError) {
   |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) })
 }
 
-fn copy_dir_contents(src: String, dst: String) -> Result(Nil, InstallerError) {
+/// hardlink 시도, 실패 시 copy 폴백 (Hex 및 스크립트 없는 npm)
+fn hardlink_dir_contents(
+  src: String,
+  dst: String,
+) -> Result(Nil, InstallerError) {
   case simplifile.get_files(src) {
-    Ok(files) -> copy_files(files, src, dst)
+    Ok(files) -> transfer_files(files, src, dst, True)
     Error(e) -> Error(IoError(simplifile.describe_error(e)))
   }
 }
 
-fn copy_files(
+/// 항상 copy (스크립트 있는 npm — store 원본 보호)
+fn copy_dir_contents(src: String, dst: String) -> Result(Nil, InstallerError) {
+  case simplifile.get_files(src) {
+    Ok(files) -> transfer_files(files, src, dst, False)
+    Error(e) -> Error(IoError(simplifile.describe_error(e)))
+  }
+}
+
+fn transfer_files(
   files: List(String),
   src_root: String,
   dst_root: String,
+  try_hardlink: Bool,
 ) -> Result(Nil, InstallerError) {
   case files {
     [] -> Ok(Nil)
     [file, ..rest] -> {
       let relative = string.drop_start(file, string.length(src_root))
       let dst_file = dst_root <> relative
-      // 대상 디렉토리 생성
       let dst_dir = filepath.directory_name(dst_file)
       let _ = simplifile.create_directory_all(dst_dir)
-      // 하드링크 시도, 실패 시 복사
-      let result = case platform.make_hardlink(file, dst_file) {
-        Ok(_) -> Ok(Nil)
-        Error(_) ->
+      let transfer_result = case try_hardlink {
+        True ->
+          case platform.make_hardlink(file, dst_file) {
+            Ok(_) -> Ok(Nil)
+            Error(_) ->
+              simplifile.copy_file(file, dst_file)
+              |> result.map_error(fn(e) {
+                LinkError(simplifile.describe_error(e))
+              })
+          }
+        False ->
           simplifile.copy_file(file, dst_file)
           |> result.map_error(fn(e) { LinkError(simplifile.describe_error(e)) })
       }
-      use _ <- result.try(result)
-      copy_files(rest, src_root, dst_root)
+      use _ <- result.try(transfer_result)
+      transfer_files(rest, src_root, dst_root, try_hardlink)
     }
   }
+}
+
+fn create_bin_links(
+  entries: List(#(String, List(#(String, String)))),
+  project_dir: String,
+  bin_dir: String,
+) -> Result(Nil, InstallerError) {
+  case entries {
+    [] -> Ok(Nil)
+    [#(pkg_name, bins), ..rest] -> {
+      use _ <- result.try(create_pkg_bin_links(
+        bins,
+        pkg_name,
+        project_dir,
+        bin_dir,
+      ))
+      create_bin_links(rest, project_dir, bin_dir)
+    }
+  }
+}
+
+fn create_pkg_bin_links(
+  bins: List(#(String, String)),
+  pkg_name: String,
+  project_dir: String,
+  bin_dir: String,
+) -> Result(Nil, InstallerError) {
+  case bins {
+    [] -> Ok(Nil)
+    [#(cmd, file_path), ..rest] -> {
+      let target =
+        project_dir <> "/node_modules/" <> pkg_name <> "/" <> file_path
+      case platform.get_platform_os() {
+        "win32" -> {
+          // Windows: .cmd wrapper 생성
+          let _ = create_cmd_wrapper(cmd, pkg_name, file_path, bin_dir)
+          Nil
+        }
+        _ -> {
+          // Unix: 심볼릭 링크 + 실행 권한
+          let link = bin_dir <> "/" <> cmd
+          let _ = platform.make_symlink(target, link)
+          let _ = platform.chmod_executable(target)
+          Nil
+        }
+      }
+      create_pkg_bin_links(rest, pkg_name, project_dir, bin_dir)
+    }
+  }
+}
+
+fn create_cmd_wrapper(
+  cmd: String,
+  pkg_name: String,
+  file_path: String,
+  bin_dir: String,
+) -> Result(Nil, InstallerError) {
+  let cmd_path = bin_dir <> "/" <> cmd <> ".cmd"
+  let relative = string.replace(pkg_name <> "/" <> file_path, "/", "\\")
+  let content = "@\"%~dp0\\..\\" <> relative <> "\" %*\r\n"
+  simplifile.write(cmd_path, content)
+  |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) })
 }
 
 fn clean_dir(

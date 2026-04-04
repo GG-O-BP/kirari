@@ -13,12 +13,21 @@ paths:
 ## 예시
 [dependencies] 아래에 Hex SemVer: `gleam_stdlib = ">= 0.44.0 and < 2.0.0"`
 [npm-dependencies] 아래에 npm SemVer: `highlight.js = "^11.0.0"`
-[security] 아래에 `exclude-newer = "2026-04-01T00:00:00Z"`
+
+## [security] 섹션
+| 키 | 값 | 기본값 | 설명 |
+|----|---|--------|------|
+| `exclude-newer` | RFC 3339 timestamp | _(없음)_ | 이 시각 이후 게시 버전 제외 |
+| `npm-scripts` | `"deny"`, `"allow"` | `"deny"` | npm 설치 스크립트 허용 여부 |
+| `npm-scripts-allow` | string array | `[]` | 스크립트 허용 패키지 목록 (deny 시 예외) |
+| `provenance` | `"ignore"`, `"warn"`, `"require"` | `"warn"` | npm Sigstore 서명 검증 정책 |
 
 gleam은 [npm-dependencies], [dev-npm-dependencies], [security] 섹션을 무시한다.
 gleam.toml이 유일한 설정 파일이다. kir.toml은 존재하지 않는다.
 
 ## kir.lock
-- version 필드 + [[package]] 배열 (name, version, registry, sha256)
+- version 필드 + [[package]] 배열
+- 공통 필드: name, version, registry, sha256
+- npm 전용 (조건부 출력): has_scripts (true일 때만), os, cpu (있을 때만)
 - 항상 패키지명 사전순 정렬 (diff 친화적)
 - CI: `kir install --frozen` — lock과 불일치 시 실패

@@ -15,18 +15,24 @@ fn sample_packages() -> List(ResolvedPackage) {
       version: "0.44.0",
       registry: Hex,
       sha256: "abc123",
+      has_scripts: False,
+      platform: Error(Nil),
     ),
     ResolvedPackage(
       name: "highlight.js",
       version: "11.9.0",
       registry: Npm,
       sha256: "def456",
+      has_scripts: False,
+      platform: Error(Nil),
     ),
     ResolvedPackage(
       name: "gleam_json",
       version: "3.0.0",
       registry: Hex,
       sha256: "ghi789",
+      has_scripts: False,
+      platform: Error(Nil),
     ),
   ]
 }
@@ -111,6 +117,8 @@ pub fn verify_frozen_mismatch_test() {
       version: "0.45.0",
       registry: Hex,
       sha256: "new_hash",
+      has_scripts: False,
+      platform: Error(Nil),
     ),
   ]
   let assert Error(lockfile.FrozenMismatch(_)) =
