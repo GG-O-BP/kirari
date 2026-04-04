@@ -50,6 +50,7 @@ fn sample_config() -> KirConfig {
     security: types.default_security_config(),
     path_deps: [],
     path_dev_deps: [],
+    overrides: [],
   )
 }
 

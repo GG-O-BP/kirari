@@ -54,6 +54,7 @@ fn sample_config() -> KirConfig {
     ),
     path_deps: [],
     path_dev_deps: [],
+    overrides: [],
   )
 }
 
@@ -131,6 +132,7 @@ pub fn add_dependency_test() {
       security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
+      overrides: [],
     )
   let dep =
     Dependency(
@@ -180,6 +182,7 @@ pub fn add_dependency_upsert_test() {
       security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
+      overrides: [],
     )
   let updated = config.add_dependency(cfg, dep_v2)
   assert list.length(updated.hex_deps) == 1
@@ -213,6 +216,7 @@ pub fn remove_dependency_test() {
       security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
+      overrides: [],
     )
   let updated = config.remove_dependency(cfg, "foo", Npm)
   assert updated.npm_deps == []

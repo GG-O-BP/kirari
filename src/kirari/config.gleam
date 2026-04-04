@@ -7,9 +7,9 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/types.{
-  type Dependency, type KirConfig, type PackageInfo, type PathDep, type Registry,
-  type SecurityConfig, Dependency, Hex, KirConfig, Npm, PackageInfo, PathDep,
-  SecurityConfig,
+  type Dependency, type KirConfig, type Override, type PackageInfo, type PathDep,
+  type Registry, type SecurityConfig, Dependency, Hex, KirConfig, Npm, Override,
+  PackageInfo, PathDep, SecurityConfig,
 }
 import simplifile
 import tom.{type Toml}
@@ -68,6 +68,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
   let npm_dev_deps =
     decode_deps_from_table(doc, ["dev-npm-dependencies"], Npm, True)
   let security = decode_security_section(doc)
+  let overrides = decode_overrides(doc)
   Ok(KirConfig(
     package: package,
     hex_deps: hex_deps,
@@ -77,6 +78,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     security: security,
     path_deps: path_deps,
     path_dev_deps: path_dev_deps,
+    overrides: overrides,
   ))
 }
 
@@ -188,6 +190,37 @@ fn decode_path_deps_from_table(
   }
 }
 
+fn decode_overrides(doc: Dict(String, Toml)) -> List(Override) {
+  let hex = decode_override_section(doc, ["overrides"], Hex)
+  let npm = decode_override_section(doc, ["npm-overrides"], Npm)
+  list.append(hex, npm)
+}
+
+fn decode_override_section(
+  doc: Dict(String, Toml),
+  path: List(String),
+  registry: Registry,
+) -> List(Override) {
+  case tom.get_table(doc, path) {
+    Ok(table) ->
+      dict.to_list(table)
+      |> list.filter_map(fn(entry) {
+        let #(name, value) = entry
+        case value {
+          tom.String(constraint) ->
+            Ok(Override(
+              name: name,
+              version_constraint: constraint,
+              registry: registry,
+            ))
+          _ -> Error(Nil)
+        }
+      })
+      |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+    Error(_) -> []
+  }
+}
+
 fn decode_security_section(doc: Dict(String, Toml)) -> SecurityConfig {
   let exclude_newer =
     tom.get_string(doc, ["security", "exclude-newer"])
@@ -265,6 +298,8 @@ pub fn encode_config(config: KirConfig) -> String {
     ),
     encode_dep_section("npm-dependencies", config.npm_deps, []),
     encode_dep_section("dev-npm-dependencies", config.npm_dev_deps, []),
+    encode_override_section("overrides", config.overrides, Hex),
+    encode_override_section("npm-overrides", config.overrides, Npm),
     encode_security_section(config.security),
   ]
   |> list.filter(fn(s) { s != "" })
@@ -343,6 +378,26 @@ fn encode_dep_section(
         |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
         |> list.map(fn(pair) { pair.1 })
       "[" <> header <> "]\n" <> string.join(all_lines, "\n") <> "\n"
+    }
+  }
+}
+
+fn encode_override_section(
+  header: String,
+  overrides: List(Override),
+  registry: Registry,
+) -> String {
+  let filtered =
+    list.filter(overrides, fn(o) { o.registry == registry })
+    |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+  case filtered {
+    [] -> ""
+    _ -> {
+      let lines =
+        list.map(filtered, fn(o) {
+          quote_key(o.name) <> " = " <> quote(o.version_constraint)
+        })
+      "[" <> header <> "]\n" <> string.join(lines, "\n") <> "\n"
     }
   }
 }

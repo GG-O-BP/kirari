@@ -46,6 +46,7 @@ fn test_config() -> KirConfig {
     security: types.default_security_config(),
     path_deps: [],
     path_dev_deps: [],
+    overrides: [],
   )
 }
 
@@ -149,6 +150,7 @@ pub fn empty_tree_test() {
       security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
+      overrides: [],
     )
   let roots =
     tree.build(empty_config, KirLock(version: 1, packages: []), dict.new())

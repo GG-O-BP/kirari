@@ -13,8 +13,8 @@ import kirari/resolver/partial_solution.{type Assignment, Decision, Derivation}
 import kirari/resolver/term.{type PackageRef, Negative, Positive}
 import kirari/semver.{type Version}
 import kirari/types.{
-  type Dependency, type KirLock, type Registry, type ResolvedPackage, Hex, Npm,
-  ResolvedPackage,
+  type Dependency, type KirLock, type Registry, type ResolvedPackage, Dependency,
+  Hex, Npm, ResolvedPackage,
 }
 
 /// resolver 에러 (pubgrub 내부에서 사용, resolver.gleam으로 전파)
@@ -53,6 +53,7 @@ pub type SolverContext {
     fetch_deps: FetchReleaseDeps,
     existing_lock: Result(KirLock, Nil),
     exclude_newer: Result(String, Nil),
+    overrides: Dict(String, String),
   )
 }
 
@@ -89,9 +90,10 @@ pub fn solve(
   let root_ref = term.PackageRef(name: "$root", registry: Hex)
   let root_key = term.to_key(root_ref)
 
-  // 루트 의존성마다 incompatibility 추가
+  // 루트 의존성마다 incompatibility 추가 (오버라이드 적용)
   let state =
     list.fold(direct_deps, state, fn(s, dep) {
+      let dep = apply_override(dep, ctx.overrides)
       let dep_ref = term.PackageRef(name: dep.name, registry: dep.registry)
       let constraint_range = parse_direct_dep_range(dep)
       let inc =
@@ -659,7 +661,9 @@ fn add_version_dependencies(
   // 먼저 enrichment 시도 (Hex에서 의존성이 비어있을 때)
   use deps <- result.try(enrich_deps(chosen, pkg_ref, ctx))
 
-  let all_deps = list.append(deps, chosen.optional_dependencies)
+  let all_deps =
+    list.append(deps, chosen.optional_dependencies)
+    |> list.map(apply_override(_, ctx.overrides))
 
   let v = case semver.parse_version(chosen.version) {
     Ok(v) -> v
@@ -887,6 +891,19 @@ fn get_platform_os() -> String
 
 @external(erlang, "kirari_ffi", "get_platform_arch")
 fn get_platform_arch() -> String
+
+/// 오버라이드 대상이면 제약을 교체
+fn apply_override(
+  dep: Dependency,
+  overrides: Dict(String, String),
+) -> Dependency {
+  let key = dep.name <> ":" <> types.registry_to_string(dep.registry)
+  case dict.get(overrides, key) {
+    Ok(override_constraint) ->
+      Dependency(..dep, version_constraint: override_constraint)
+    Error(_) -> dep
+  }
+}
 
 fn filter_by_cutoff(
   versions: List(VersionInfoCompact),

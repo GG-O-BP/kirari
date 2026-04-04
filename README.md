@@ -1,6 +1,6 @@
 # kirari
 
-A unified package manager for Gleam. Extends `gleam.toml` with `[npm-dependencies]` and `[security]` sections to manage both Hex and npm dependencies in one workflow. Run it with the `kir` command.
+A unified package manager for Gleam. Extends `gleam.toml` with `[npm-dependencies]`, `[overrides]`, and `[security]` sections to manage both Hex and npm dependencies in one workflow. Run it with the `kir` command.
 
 Written in Gleam, targeting Erlang (BEAM).
 
@@ -21,6 +21,7 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Vulnerability audit** — `kir audit` checks installed packages against GitHub Advisory Database (Hex/Erlang) and npm bulk advisory API, with severity filtering, `--json` output for CI, and configurable ignore list
 - **Deprecation warnings** — Hex retired and npm deprecated packages are flagged during install
 - **Duplicate declaration warning** — detects packages declared in both `[dependencies]` and `[dev-dependencies]`
+- **Dependency overrides** — `[overrides]` and `[npm-overrides]` sections force specific version constraints on any transitive dependency, resolving conflicts that would otherwise be unsolvable
 - **PubGrub dependency resolution** — backtracking solver with learned clauses, human-readable conflict explanation ("Because X depends on Y..."), lock preference, exclude-newer filtering
 - **SemVer 2.0.0 compliant** — pre-release identifier sorting, build metadata parsing (`+build` ignored in comparison), single-digit version padding (`"1"` → `1.0.0`), unified constraint parser accepting both Hex (`>= 1.0.0 and < 2.0.0`, `~> 1.2`) and npm (`^1.0.0`, `~1.0.0`, `1.0.0 - 2.0.0`) syntax in any dependency section
 - **Deterministic lockfile metadata** — `kir.lock` includes generation timestamp and kirari version for auditability
@@ -206,6 +207,13 @@ lodash = ">= 4.17.0 and < 5.0.0"  # Hex-style syntax also works
 @types/node = "^18.0.0"
 vitest = "~> 3.1"                  # Hex-style works here too
 
+[overrides]
+gleam_json = ">= 3.0.0 and < 4.0.0"   # Force version for all dependents
+
+[npm-overrides]
+semver = "^7.6.0"                       # Override transitive npm constraint
+postcss = ">= 8.4.0 and < 9.0.0"       # Hex-style works here too
+
 [security]
 exclude-newer = "2026-04-01T00:00:00Z"
 npm-scripts = "deny"
@@ -215,7 +223,7 @@ license-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC"]
 audit-ignore = ["GHSA-xxxx-xxxx-xxxx"]
 ```
 
-`[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, and `[security]` are kirari extensions that Gleam silently ignores.
+`[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, `[overrides]`, `[npm-overrides]`, and `[security]` are kirari extensions that Gleam silently ignores.
 
 ### Version constraint syntax
 
@@ -234,6 +242,27 @@ kirari accepts both Hex and npm version constraint formats in any dependency sec
 | npm OR | `"^1.0.0 \|\| ^2.0.0"` | Either range matches |
 | Exact | `"== 1.0.0"` or `"1.0.0"` | Exactly `1.0.0` |
 | Any | `"*"` or `""` | Any version |
+
+### Dependency overrides
+
+Override transitive dependency constraints when packages require incompatible versions of a shared dependency. Overrides replace all constraints (direct and transitive) for the named package.
+
+```toml
+[overrides]
+gleam_json = ">= 3.0.0 and < 4.0.0"
+
+[npm-overrides]
+semver = "^7.6.0"
+```
+
+When overrides are active, `kir install` prints them before resolving:
+
+```
+Overrides:
+  gleam_json → ">= 3.0.0 and < 4.0.0" (hex)
+  semver → "^7.6.0" (npm)
+Resolving dependencies...
+```
 
 ### Security options
 
@@ -285,6 +314,7 @@ gleam.toml (single source of truth)
     │
     ├── [dependencies], [dev-dependencies]     ← Gleam reads these
     ├── [npm-dependencies], [dev-npm-dependencies]  ← kirari reads, Gleam ignores
+    ├── [overrides], [npm-overrides]           ← kirari reads, Gleam ignores
     └── [security]                             ← kirari reads, Gleam ignores
     │
     ▼
@@ -337,6 +367,7 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Store verification** | Not available | `kir store verify` checks cached package integrity |
 | **Vulnerability audit** | Not available | `kir audit` checks against GitHub Advisory Database + npm advisory API, with severity filtering and JSON output |
 | **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
+| **Dependency overrides** | Not available | `[overrides]` and `[npm-overrides]` force version constraints on transitive dependencies |
 | **Selective update** | Not available | `kir update <pkg>` updates specific packages only |
 | **Offline install** | Not available | `kir install --offline` installs from cache without registry |
 | **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` + all gleam export subcommands via passthrough |

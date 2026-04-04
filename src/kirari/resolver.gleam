@@ -9,7 +9,7 @@ import kirari/registry/npm
 import kirari/resolver/pubgrub
 import kirari/semver
 import kirari/types.{
-  type Dependency, type KirConfig, type KirLock, type Registry,
+  type Dependency, type KirConfig, type KirLock, type Override, type Registry,
   type ResolvedPackage, Hex, Npm,
 }
 
@@ -158,6 +158,7 @@ fn resolve_full_with_deps(
     Ok(ts) -> Ok(ts)
     Error(_) -> Error(Nil)
   }
+  let overrides = overrides_to_dict(config.overrides)
 
   // FetchVersions를 PubGrub 형식으로 변환
   let pubgrub_fetch = fn(name: String, registry: Registry) {
@@ -180,6 +181,7 @@ fn resolve_full_with_deps(
       fetch_deps: pubgrub_fetch_deps,
       existing_lock: existing_lock,
       exclude_newer: exclude_newer,
+      overrides: overrides,
     )
 
   use solve_result <- result.try(
@@ -464,6 +466,17 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
       )
     }),
   )
+}
+
+// ---------------------------------------------------------------------------
+// Override 변환
+// ---------------------------------------------------------------------------
+
+fn overrides_to_dict(overrides: List(Override)) -> Dict(String, String) {
+  list.fold(overrides, dict.new(), fn(acc, o) {
+    let key = o.name <> ":" <> types.registry_to_string(o.registry)
+    dict.insert(acc, key, o.version_constraint)
+  })
 }
 
 // ---------------------------------------------------------------------------

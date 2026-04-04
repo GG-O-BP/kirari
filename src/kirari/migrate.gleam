@@ -74,16 +74,19 @@ fn decode_gleam_toml(doc: Dict(String, Toml)) -> Result(KirConfig, MigrateError)
       repository: repository,
     )
 
-  Ok(KirConfig(
-    package: package,
-    hex_deps: hex_deps,
-    hex_dev_deps: hex_dev_deps,
-    npm_deps: [],
-    npm_dev_deps: [],
-    security: types.default_security_config(),
-    path_deps: path_deps,
-    path_dev_deps: path_dev_deps,
-  ))
+  Ok(
+    KirConfig(
+      package: package,
+      hex_deps: hex_deps,
+      hex_dev_deps: hex_dev_deps,
+      npm_deps: [],
+      npm_dev_deps: [],
+      security: types.default_security_config(),
+      path_deps: path_deps,
+      path_dev_deps: path_dev_deps,
+      overrides: [],
+    ),
+  )
 }
 
 fn decode_gleam_repository(doc: Dict(String, Toml)) -> Result(String, Nil) {

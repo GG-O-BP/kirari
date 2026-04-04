@@ -76,6 +76,7 @@ pub fn do_install(
       )
   }
   warn_duplicate_deps(cfg)
+  output.print_overrides(cfg.overrides)
   let existing_lock =
     lockfile.read(dir)
     |> result.map_error(fn(_) { Nil })
@@ -231,6 +232,7 @@ pub fn do_update(dir: String) -> Result(Nil, KirError) {
     config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
+  output.print_overrides(cfg.overrides)
   io.println("Updating all dependencies...")
   use resolve_result <- result.try(
     resolver.resolve_full(cfg, Error(Nil))
@@ -276,6 +278,7 @@ pub fn do_update_selective(
     lockfile.read(dir)
     |> result.map_error(LockErr),
   )
+  output.print_overrides(cfg.overrides)
   io.println("Updating " <> string.join(packages, ", ") <> "...")
   let filtered_lock = lockfile.remove_packages(lock, packages)
   use resolve_result <- result.try(

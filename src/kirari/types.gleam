@@ -50,6 +50,11 @@ pub type PathDep {
   PathDep(name: String, path: String, dev: Bool)
 }
 
+/// 전이 의존성 버전 강제 ([overrides] / [npm-overrides])
+pub type Override {
+  Override(name: String, version_constraint: String, registry: Registry)
+}
+
 // ---------------------------------------------------------------------------
 // ResolvedPackage (kir.lock에 기록되는 확정 패키지)
 // ---------------------------------------------------------------------------
@@ -162,6 +167,7 @@ pub type KirConfig {
     security: SecurityConfig,
     path_deps: List(PathDep),
     path_dev_deps: List(PathDep),
+    overrides: List(Override),
   )
 }
 

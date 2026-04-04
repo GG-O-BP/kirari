@@ -8,6 +8,7 @@ import kirari/cli/error.{type KirError}
 import kirari/installer
 import kirari/pipeline
 import kirari/platform
+import kirari/types.{type Override}
 
 // ---------------------------------------------------------------------------
 // 에러 출력
@@ -142,6 +143,30 @@ pub fn print_installer_warnings(warnings: List(installer.Warning)) -> Nil {
         )
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// 오버라이드 출력
+// ---------------------------------------------------------------------------
+
+pub fn print_overrides(overrides: List(Override)) -> Nil {
+  case overrides {
+    [] -> Nil
+    _ -> {
+      io.println(color_yellow("Overrides:"))
+      list.each(overrides, fn(o) {
+        io.println(
+          "  "
+          <> o.name
+          <> " → "
+          <> color_dim(o.version_constraint)
+          <> " ("
+          <> types.registry_to_string(o.registry)
+          <> ")",
+        )
+      })
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

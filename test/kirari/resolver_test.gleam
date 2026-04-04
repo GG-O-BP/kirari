@@ -248,6 +248,7 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
     security: types.default_security_config(),
     path_deps: [],
     path_dev_deps: [],
+    overrides: [],
   )
 }
 

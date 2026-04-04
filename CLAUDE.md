@@ -3,7 +3,7 @@
 gleam.toml 하나로 Hex와 npm 의존성을 단일 워크플로우로 관리. Gleam으로 작성.
 CLI 명령어는 `kir`. 프로그램 자체를 지칭할 때는 kirari.
 
-gleam.toml에 kirari 전용 섹션([npm-dependencies], [dev-npm-dependencies], [security])을 추가.
+gleam.toml에 kirari 전용 섹션([npm-dependencies], [dev-npm-dependencies], [overrides], [npm-overrides], [security])을 추가.
 gleam 컴파일러는 이 섹션들을 무시하므로 gleam build와 완전 호환.
 kir.toml은 존재하지 않는다.
 

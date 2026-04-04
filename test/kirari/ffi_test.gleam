@@ -42,6 +42,7 @@ pub fn find_undeclared_filters_declared_test() {
       security: types.default_security_config(),
       path_deps: [],
       path_dev_deps: [],
+      overrides: [],
     )
   let undeclared = ffi_detect.find_undeclared(detections, config)
   assert list.length(undeclared) == 1
