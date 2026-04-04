@@ -262,15 +262,15 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Lockfile hash** | `outer_checksum` (SHA256, from Hex registry) | `sha256` (SHA256, computed locally) |
 | **npm dependency management** | Not managed; requires separate `package.json` and npm/yarn/pnpm | Native; declared in `gleam.toml [npm-dependencies]`, resolved alongside Hex |
 | **Dependency resolution** | PubGrub (backtracking) | Greedy (highest compatible, no backtracking, diamond conflict detection) |
-| **Local package store** | Downloads to `build/packages/` per project | Content-addressable `~/.kir/store/` shared across projects, registry-separated (`hex/`, `npm/`) |
-| **Installation method** | Copy | Hardlink (immutable packages) or copy (npm with scripts) |
+| **Local package store** | Global tarball cache + extracts to `build/packages/` per project | Content-addressable `~/.kir/store/` shared across projects, registry-separated (`hex/`, `npm/`) |
+| **Installation method** | Extract from tarball | Hardlink (immutable packages) or copy (npm with scripts) |
 | **npm bin executables** | Not managed | Auto-creates `node_modules/.bin/` symlinks (Unix) or `.cmd` wrappers (Windows) |
 | **Platform-aware resolution** | Not available | Respects npm `os`/`cpu` fields |
 | **`exclude-newer`** | Not available | `[security] exclude-newer` or `--exclude-newer` flag |
 | **npm script policy** | Not available | `[security] npm-scripts` with deny/allow/allowlist |
 | **Provenance verification** | Not available | npm Sigstore ECDSA signature verification with registry key caching (warn/require/ignore) |
 | **SRI integrity** | Not available | Verifies npm `dist.integrity` field (sha256/sha512) |
-| **Hex CHECKSUM** | Not available | Verifies `CHECKSUM` inside Hex tarballs |
+| **Hex tarball verification** | `outer_checksum` (SHA256 of entire tarball) | `outer_checksum` + inner `CHECKSUM` file (SHA256 of VERSION+metadata+contents) |
 | **Store GC** | Not available | `kir clean --store` — Hex immutable (never expires), npm 90-day retention |
 | **Dependency tree** | `gleam deps tree` | `kir tree` (full transitive tree with cycle detection) |
 | **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
