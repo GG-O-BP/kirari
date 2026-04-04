@@ -448,6 +448,177 @@ fn parse_npm_tilde(s: String) -> Result(Constraint, SemverError) {
 }
 
 // ---------------------------------------------------------------------------
+// 통합 제약 조건 파싱 (hex + npm 문법 모두 수용)
+// ---------------------------------------------------------------------------
+
+/// 통합 제약 조건 파서: hex와 npm 문법 모두 수용
+/// gleam.toml에서 사용자가 작성하는 제약 조건용
+pub fn parse_constraint(s: String) -> Result(Constraint, SemverError) {
+  let s = string.trim(s)
+  case s {
+    "" | "*" -> Ok(Any)
+    _ -> parse_unified_or(s)
+  }
+}
+
+fn parse_unified_or(s: String) -> Result(Constraint, SemverError) {
+  // hex 스타일 " or " 먼저 시도
+  case string.split_once(s, " or ") {
+    Ok(#(left, right)) -> {
+      use l <- result.try(parse_unified_and_group(string.trim(left)))
+      use r <- result.try(parse_unified_or(string.trim(right)))
+      Ok(Or(l, r))
+    }
+    Error(_) -> {
+      // npm 스타일 "||"
+      let parts = string.split(s, "||")
+      case parts {
+        [] -> Ok(Any)
+        [single] -> parse_unified_and_group(string.trim(single))
+        [first, ..rest] -> {
+          use l <- result.try(parse_unified_and_group(string.trim(first)))
+          use r <- result.try(parse_unified_or(string.join(rest, "||")))
+          Ok(Or(l, r))
+        }
+      }
+    }
+  }
+}
+
+fn parse_unified_and_group(s: String) -> Result(Constraint, SemverError) {
+  // hex 스타일 " and "
+  case string.split_once(s, " and ") {
+    Ok(#(left, right)) -> {
+      use l <- result.try(parse_unified_single(string.trim(left)))
+      use r <- result.try(parse_unified_and_group(string.trim(right)))
+      Ok(And(l, r))
+    }
+    Error(_) -> {
+      // npm 스타일: 하이픈 범위 또는 공백 구분 AND
+      case detect_hyphen_range(s) {
+        Ok(#(low, high)) -> parse_hyphen_range(low, high)
+        Error(_) -> {
+          let parts =
+            string.split(s, " ")
+            |> list.filter(fn(p) { string.trim(p) != "" })
+            |> merge_operator_parts
+          parse_unified_parts(parts)
+        }
+      }
+    }
+  }
+}
+
+/// 공백 split 후 단독 연산자(">=", ">", "~>" 등)를 다음 토큰과 병합
+/// [">=", "1.0.0", "<", "2.0.0"] → [">= 1.0.0", "< 2.0.0"]
+fn merge_operator_parts(parts: List(String)) -> List(String) {
+  case parts {
+    [] -> []
+    [op, version, ..rest] ->
+      case is_bare_operator(op) {
+        True -> [op <> " " <> version, ..merge_operator_parts(rest)]
+        False -> [op, ..merge_operator_parts([version, ..rest])]
+      }
+    [single] -> [single]
+  }
+}
+
+fn is_bare_operator(s: String) -> Bool {
+  s == ">="
+  || s == ">"
+  || s == "<="
+  || s == "<"
+  || s == "=="
+  || s == "="
+  || s == "~>"
+}
+
+fn parse_unified_parts(parts: List(String)) -> Result(Constraint, SemverError) {
+  case parts {
+    [] -> Ok(Any)
+    [single] -> parse_unified_single(single)
+    [first, ..rest] -> {
+      use l <- result.try(parse_unified_single(first))
+      use r <- result.try(parse_unified_parts(rest))
+      Ok(And(l, r))
+    }
+  }
+}
+
+fn parse_unified_single(s: String) -> Result(Constraint, SemverError) {
+  case s {
+    "^" <> rest -> parse_npm_caret(rest)
+    "~> " <> rest -> parse_pessimistic(rest)
+    "~>" <> rest -> parse_pessimistic(rest)
+    "~" <> rest -> parse_npm_tilde(rest)
+    ">= " <> rest -> {
+      use v <- result.try(parse_version(rest))
+      Ok(Gte(v))
+    }
+    ">=" <> rest -> {
+      use v <- result.try(parse_version(string.trim(rest)))
+      Ok(Gte(v))
+    }
+    "> " <> rest -> {
+      use v <- result.try(parse_version(rest))
+      Ok(Gt(v))
+    }
+    ">" <> rest -> {
+      use v <- result.try(parse_version(string.trim(rest)))
+      Ok(Gt(v))
+    }
+    "<= " <> rest -> {
+      use v <- result.try(parse_version(rest))
+      Ok(Lte(v))
+    }
+    "<=" <> rest -> {
+      use v <- result.try(parse_version(string.trim(rest)))
+      Ok(Lte(v))
+    }
+    "< " <> rest -> {
+      use v <- result.try(parse_version(rest))
+      Ok(Lt(v))
+    }
+    "<" <> rest -> {
+      use v <- result.try(parse_version(string.trim(rest)))
+      Ok(Lt(v))
+    }
+    "== " <> rest -> {
+      use v <- result.try(parse_version(rest))
+      Ok(Eq(v))
+    }
+    "==" <> rest -> {
+      use v <- result.try(parse_version(string.trim(rest)))
+      Ok(Eq(v))
+    }
+    "=" <> rest -> {
+      use v <- result.try(parse_version(string.trim(rest)))
+      Ok(Eq(v))
+    }
+    _ -> {
+      use v <- result.try(parse_version(s))
+      Ok(Eq(v))
+    }
+  }
+}
+
+/// Elixir pessimistic constraint (~>)
+/// 2파트 ~> 1.2 → >= 1.2.0 and < 2.0.0
+/// 3파트 ~> 1.2.3 → >= 1.2.3 and < 1.3.0
+fn parse_pessimistic(s: String) -> Result(Constraint, SemverError) {
+  let trimmed = string.trim(s)
+  let dot_count =
+    string.to_graphemes(trimmed)
+    |> list.count(fn(c) { c == "." })
+  use v <- result.try(parse_version(trimmed))
+  let upper = case dot_count {
+    1 -> Version(v.major + 1, 0, 0, "")
+    _ -> Version(v.major, v.minor + 1, 0, "")
+  }
+  Ok(And(Gte(v), Lt(upper)))
+}
+
+// ---------------------------------------------------------------------------
 // 제약 조건 만족 검사
 // ---------------------------------------------------------------------------
 

@@ -93,7 +93,7 @@ pub fn solve(
   let state =
     list.fold(direct_deps, state, fn(s, dep) {
       let dep_ref = term.PackageRef(name: dep.name, registry: dep.registry)
-      let constraint_range = parse_dep_range(dep)
+      let constraint_range = parse_direct_dep_range(dep)
       let inc =
         incompatibility.new(
           [
@@ -826,6 +826,13 @@ fn get_versions(
       let new_cache = dict.insert(state.version_cache, key, versions)
       Ok(#(SolverState(..state, version_cache: new_cache), versions))
     }
+  }
+}
+
+fn parse_direct_dep_range(dep: Dependency) -> semver.VersionRange {
+  case semver.parse_constraint(dep.version_constraint) {
+    Ok(c) -> semver.constraint_to_range(c)
+    Error(_) -> semver.version_range_any()
   }
 }
 

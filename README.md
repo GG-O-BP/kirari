@@ -22,7 +22,7 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Deprecation warnings** — Hex retired and npm deprecated packages are flagged during install
 - **Duplicate declaration warning** — detects packages declared in both `[dependencies]` and `[dev-dependencies]`
 - **PubGrub dependency resolution** — backtracking solver with learned clauses, human-readable conflict explanation ("Because X depends on Y..."), lock preference, exclude-newer filtering
-- **SemVer 2.0.0 compliant** — pre-release identifier sorting, build metadata parsing (`+build` ignored in comparison), single-digit version padding (`"1"` → `1.0.0`)
+- **SemVer 2.0.0 compliant** — pre-release identifier sorting, build metadata parsing (`+build` ignored in comparison), single-digit version padding (`"1"` → `1.0.0`), unified constraint parser accepting both Hex (`>= 1.0.0 and < 2.0.0`, `~> 1.2`) and npm (`^1.0.0`, `~1.0.0`, `1.0.0 - 2.0.0`) syntax in any dependency section
 - **Deterministic lockfile metadata** — `kir.lock` includes generation timestamp and kirari version for auditability
 - **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
 - **`gleam build` compatible** — gleam ignores kirari sections; auto-generates `manifest.toml` + `packages.toml`
@@ -199,10 +199,12 @@ gleam_json = ">= 3.0.0 and < 4.0.0"
 gleeunit = ">= 1.0.0 and < 2.0.0"
 
 [npm-dependencies]
-highlight.js = "^11.0.0"
+highlight.js = "^11.0.0"           # npm caret syntax
+lodash = ">= 4.17.0 and < 5.0.0"  # Hex-style syntax also works
 
 [dev-npm-dependencies]
 @types/node = "^18.0.0"
+vitest = "~> 3.1"                  # Hex-style works here too
 
 [security]
 exclude-newer = "2026-04-01T00:00:00Z"
@@ -214,6 +216,24 @@ audit-ignore = ["GHSA-xxxx-xxxx-xxxx"]
 ```
 
 `[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, and `[security]` are kirari extensions that Gleam silently ignores.
+
+### Version constraint syntax
+
+kirari accepts both Hex and npm version constraint formats in any dependency section. You can use whichever style you prefer, regardless of registry.
+
+| Syntax | Example | Meaning |
+|--------|---------|---------|
+| Hex range | `">= 1.0.0 and < 2.0.0"` | `>= 1.0.0` AND `< 2.0.0` |
+| Hex pessimistic | `"~> 1.2"` | `>= 1.2.0` and `< 2.0.0` |
+| Hex pessimistic (3-part) | `"~> 1.2.3"` | `>= 1.2.3` and `< 1.3.0` |
+| Hex OR | `">= 1.0.0 or >= 3.0.0"` | Either range matches |
+| npm caret | `"^1.2.3"` | `>= 1.2.3` and `< 2.0.0` |
+| npm tilde | `"~1.2.3"` | `>= 1.2.3` and `< 1.3.0` |
+| npm range | `">=1.0.0 <2.0.0"` | Space-separated AND |
+| npm hyphen | `"1.2.3 - 2.3.4"` | `>= 1.2.3` and `<= 2.3.4` |
+| npm OR | `"^1.0.0 \|\| ^2.0.0"` | Either range matches |
+| Exact | `"== 1.0.0"` or `"1.0.0"` | Exactly `1.0.0` |
+| Any | `"*"` or `""` | Any version |
 
 ### Security options
 
