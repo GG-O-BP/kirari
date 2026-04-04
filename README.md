@@ -96,7 +96,7 @@ gleam build
 | `kir remove <pkg> [--npm]` | Remove a dependency and reinstall |
 | `kir deps list` | List all dependencies with versions and registries |
 | `kir deps download` | Download dependencies without installing |
-| `kir tree` | Print the unified dependency tree |
+| `kir tree` | Print the full dependency tree with transitive dependencies |
 | `kir clean [--store] [--keep-cache]` | Remove `build/` and `node_modules/`; `--store` runs store GC; `--keep-cache` preserves Gleam compilation cache |
 
 ### Build & Run
@@ -272,7 +272,7 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **SRI integrity** | Not available | Verifies npm `dist.integrity` field (sha256/sha512) |
 | **Hex CHECKSUM** | Not available | Verifies `CHECKSUM` inside Hex tarballs |
 | **Store GC** | Not available | `kir clean --store` — Hex immutable (never expires), npm 90-day retention |
-| **Dependency tree** | `gleam deps tree` | `kir tree` |
+| **Dependency tree** | `gleam deps tree` | `kir tree` (full transitive tree with cycle detection) |
 | **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
 | **Export** | `gleam export erlang-shipment`, `hex-tarball` | `kir export` + all gleam export subcommands via passthrough |
 | **Publishing** | `gleam publish`, `gleam hex retire/unretire` | `kir publish`, `kir hex retire/unretire` (delegates to gleam) |
@@ -304,7 +304,7 @@ src/kirari/
   tarball.gleam           Hex double-tar + CHECKSUM verification, npm tgz extraction
   installer.gleam         Registry-aware installation (hardlink/copy) + bin symlinks/cmd wrappers
   platform.gleam          Erlang FFI wrappers (tar, hardlink, symlink, crypto, platform detection)
-  tree.gleam              Dependency tree rendering
+  tree.gleam              Recursive dependency tree with transitive deps + cycle detection
   export.gleam            manifest.toml + packages.toml + package.json export
   ffi.gleam               Bare import detection in .mjs files
 src/kirari_ffi.erl        Erlang FFI (tar, hardlink, rename, symlink, ECDSA, platform)

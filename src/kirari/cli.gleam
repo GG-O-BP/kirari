@@ -1,5 +1,6 @@
 //// CLI 오케스트레이터 — glint 기반 명령어 등록 및 디스패치
 
+import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/list
@@ -227,7 +228,8 @@ fn root_cmd() -> glint.Command(Nil) {
 
 fn print_help() -> Nil {
   io.println("kir — unified package manager for Gleam")
-  io.println("kirari 1.0.0")
+  let version = platform.app_version() |> result.unwrap("unknown")
+  io.println("kirari " <> version)
   io.println("")
   io.println("Usage: kir <command> [flags]")
   io.println("")
@@ -750,7 +752,11 @@ fn do_tree(dir: String) -> Result(Nil, KirError) {
     lockfile.read(dir)
     |> result.map_error(LockErr),
   )
-  let roots = tree.build(cfg, lock)
+  let version_infos = case resolver.resolve_full(cfg, Ok(lock)) {
+    Ok(resolve_result) -> resolve_result.version_infos
+    Error(_) -> dict.new()
+  }
+  let roots = tree.build(cfg, lock, version_infos)
   let output = tree.render(roots)
   case output {
     "" -> io.println("(no dependencies)")
@@ -767,8 +773,13 @@ fn do_export(dir: String) -> Result(Nil, KirError) {
   let lock =
     lockfile.read(dir)
     |> result.map_error(fn(_) { Nil })
+  // resolver 실행하여 version_infos 얻기 (manifest.toml requirements용)
+  let version_infos = case resolver.resolve_full(cfg, lock) {
+    Ok(resolve_result) -> Ok(resolve_result.version_infos)
+    Error(_) -> Error(Nil)
+  }
   use paths <- result.try(
-    export.export(cfg, lock, dir)
+    export.export(cfg, lock, version_infos, dir)
     |> result.map_error(ExportErr),
   )
   list.each(paths, fn(p) { io.println("Wrote " <> p) })
@@ -844,12 +855,13 @@ fn do_deps_download(dir: String) -> Result(Nil, KirError) {
 fn do_clean(dir: String, clean_store: Bool, keep_cache: Bool) -> Nil {
   case keep_cache {
     False -> {
-      let _ = simplifile.delete(dir <> "/build")
+      // build/dev (컴파일 출력) + build/packages (의존성 소스) 삭제
+      let _ = simplifile.delete(dir <> "/build/dev")
+      let _ = simplifile.delete(dir <> "/build/packages")
       Nil
     }
     True -> {
-      // build/ 삭제하되 _gleam_artefacts/ 보존은 복잡하므로
-      // build/packages만 삭제
+      // build/packages만 삭제, build/dev (컴파일 캐시) 보존
       let _ = simplifile.delete(dir <> "/build/packages")
       Nil
     }

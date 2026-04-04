@@ -36,6 +36,7 @@ pub type VersionDependency {
 // ---------------------------------------------------------------------------
 
 /// 패키지의 모든 버전 정보를 Hex API에서 조회
+/// 개별 release API를 사용하여 requirements를 포함
 pub fn get_versions(name: String) -> Result(List(PackageVersion), HexError) {
   let url = "https://hex.pm/api/packages/" <> name
   use req <- result.try(
@@ -52,6 +53,41 @@ pub fn get_versions(name: String) -> Result(List(PackageVersion), HexError) {
     404 -> Error(PackageNotFound(name))
     status -> Error(ApiError(status, resp.body))
   }
+}
+
+/// 특정 버전의 의존성 정보를 개별 release API에서 조회
+pub fn get_release_deps(
+  name: String,
+  version: String,
+) -> Result(List(VersionDependency), HexError) {
+  let url = "https://hex.pm/api/packages/" <> name <> "/releases/" <> version
+  use req <- result.try(
+    request.to(url)
+    |> result.map_error(fn(_) { NetworkError("invalid URL: " <> url) }),
+  )
+  let req = request.set_header(req, "accept", "application/json")
+  use resp <- result.try(
+    httpc.send(req)
+    |> result.map_error(fn(e) { NetworkError(string.inspect(e)) }),
+  )
+  case resp.status {
+    200 -> parse_release_deps(resp.body)
+    404 -> Error(PackageNotFound(name <> "@" <> version))
+    status -> Error(ApiError(status, resp.body))
+  }
+}
+
+fn parse_release_deps(body: String) -> Result(List(VersionDependency), HexError) {
+  let decoder = {
+    use deps <- decode.optional_field(
+      "requirements",
+      [],
+      requirements_decoder(),
+    )
+    decode.success(deps)
+  }
+  json.parse(body, decoder)
+  |> result.map_error(fn(e) { ParseResponseError(string.inspect(e)) })
 }
 
 /// 패키지 tarball을 다운로드하고 SHA256 해시를 함께 반환

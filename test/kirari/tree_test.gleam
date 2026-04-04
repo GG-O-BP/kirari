@@ -1,6 +1,8 @@
+import gleam/dict
 import gleam/list
 import gleam/string
 import gleeunit
+import kirari/resolver.{type VersionInfo, VersionInfo}
 import kirari/tree
 import kirari/types.{
   type KirConfig, type KirLock, Dependency, Hex, KirConfig, KirLock, Npm,
@@ -66,8 +68,41 @@ fn test_lock() -> KirLock {
   ])
 }
 
+fn test_version_infos() -> dict.Dict(String, VersionInfo) {
+  dict.from_list([
+    #(
+      "gleam_stdlib:hex",
+      VersionInfo(
+        version: "0.44.0",
+        published_at: "",
+        tarball_url: "",
+        dependencies: [],
+        os: [],
+        cpu: [],
+        has_scripts: False,
+        signatures: [],
+        integrity: "",
+      ),
+    ),
+    #(
+      "highlight.js:npm",
+      VersionInfo(
+        version: "11.9.0",
+        published_at: "",
+        tarball_url: "",
+        dependencies: [],
+        os: [],
+        cpu: [],
+        has_scripts: False,
+        signatures: [],
+        integrity: "",
+      ),
+    ),
+  ])
+}
+
 pub fn build_tree_test() {
-  let roots = tree.build(test_config(), test_lock())
+  let roots = tree.build(test_config(), test_lock(), test_version_infos())
   assert list.length(roots) == 2
   let assert [first, second] = roots
   assert first.name == "gleam_stdlib"
@@ -75,7 +110,7 @@ pub fn build_tree_test() {
 }
 
 pub fn render_tree_test() {
-  let roots = tree.build(test_config(), test_lock())
+  let roots = tree.build(test_config(), test_lock(), test_version_infos())
   let output = tree.render(roots)
   assert string.contains(output, "gleam_stdlib")
   assert string.contains(output, "v0.44.0")
@@ -103,7 +138,93 @@ pub fn empty_tree_test() {
       path_deps: [],
       path_dev_deps: [],
     )
-  let roots = tree.build(empty_config, KirLock(version: 1, packages: []))
+  let roots =
+    tree.build(empty_config, KirLock(version: 1, packages: []), dict.new())
   assert roots == []
   assert tree.render(roots) == ""
+}
+
+pub fn transitive_deps_tree_test() {
+  let config =
+    KirConfig(
+      ..test_config(),
+      hex_deps: [
+        Dependency(
+          name: "my_lib",
+          version_constraint: ">= 1.0.0",
+          registry: Hex,
+          dev: False,
+        ),
+      ],
+      npm_deps: [],
+    )
+  let lock =
+    KirLock(version: 1, packages: [
+      ResolvedPackage(
+        name: "my_lib",
+        version: "1.0.0",
+        registry: Hex,
+        sha256: "x",
+        has_scripts: False,
+        platform: Error(Nil),
+      ),
+      ResolvedPackage(
+        name: "gleam_stdlib",
+        version: "0.44.0",
+        registry: Hex,
+        sha256: "y",
+        has_scripts: False,
+        platform: Error(Nil),
+      ),
+    ])
+  let vis =
+    dict.from_list([
+      #(
+        "my_lib:hex",
+        VersionInfo(
+          version: "1.0.0",
+          published_at: "",
+          tarball_url: "",
+          dependencies: [
+            Dependency(
+              name: "gleam_stdlib",
+              version_constraint: ">= 0.44.0",
+              registry: Hex,
+              dev: False,
+            ),
+          ],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+        ),
+      ),
+      #(
+        "gleam_stdlib:hex",
+        VersionInfo(
+          version: "0.44.0",
+          published_at: "",
+          tarball_url: "",
+          dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+        ),
+      ),
+    ])
+  let roots = tree.build(config, lock, vis)
+  assert list.length(roots) == 1
+  let assert [root] = roots
+  assert root.name == "my_lib"
+  // 전이 의존성이 children으로 표시
+  assert list.length(root.children) == 1
+  let assert [child] = root.children
+  assert child.name == "gleam_stdlib"
+  // 렌더링에 전이 의존성 포함
+  let output = tree.render(roots)
+  assert string.contains(output, "my_lib")
+  assert string.contains(output, "gleam_stdlib")
 }

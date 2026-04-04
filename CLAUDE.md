@@ -38,7 +38,7 @@ kir.toml은 존재하지 않는다.
 | `kir remove <pkg> [--npm]` | 의존성 제거 후 자동 reinstall |
 | `kir deps list` | 의존성 목록 출력 |
 | `kir deps download` | 의존성 다운로드 (설치 없이) |
-| `kir tree` | 통합 의존성 트리 출력 |
+| `kir tree` | 전이 의존성 포함 전체 트리 출력 (resolver 실행, 순환 방지) |
 | `kir clean [--store] [--keep-cache]` | build/ + node_modules/ 삭제, --store로 GC, --keep-cache로 컴파일 캐시 보존 |
 | `kir build/run/test/check/dev` | 의존성 동기화 후 gleam 명령어 실행 |
 | `kir format/fix/new/shell/lsp` | gleam 명령어 직접 위임 |

@@ -1,4 +1,3 @@
-import gleam/list
 import gleeunit
 import kirari/store/metadata.{PackageMetadata, PlatformInfo}
 
@@ -91,7 +90,7 @@ pub fn extract_bin_string_test() {
   }"
   let assert Ok(meta) =
     metadata.extract_from_package_json(json, "cowsay", "1.0.0")
-  assert list.length(meta.bin) == 1
+  assert meta.bin == [#("cowsay", "./cli.js")]
 }
 
 // ---------------------------------------------------------------------------

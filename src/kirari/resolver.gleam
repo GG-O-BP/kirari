@@ -50,6 +50,10 @@ pub type ResolveResult {
 pub type FetchVersions =
   fn(String, Registry) -> Result(List(VersionInfo), ResolverError)
 
+/// 선택된 버전의 의존성 조회 함수 타입 (Hex 개별 release API용)
+pub type FetchReleaseDeps =
+  fn(String, String, Registry) -> Result(List(types.Dependency), ResolverError)
+
 // ---------------------------------------------------------------------------
 // 공개 API
 // ---------------------------------------------------------------------------
@@ -63,13 +67,27 @@ pub fn resolve(
 }
 
 /// 레지스트리 함수를 주입하여 의존성 해결 (테스트용)
+/// mock_fetch가 dependencies를 이미 포함하므로 release deps 조회 불필요
 pub fn resolve_with(
   config: KirConfig,
   existing_lock: Result(KirLock, Nil),
   fetch: FetchVersions,
 ) -> Result(List(ResolvedPackage), ResolverError) {
-  use result <- result.try(resolve_full_with(config, existing_lock, fetch))
+  use result <- result.try(resolve_full_with_deps(
+    config,
+    existing_lock,
+    fetch,
+    no_op_fetch_deps,
+  ))
   Ok(result.packages)
+}
+
+fn no_op_fetch_deps(
+  _name: String,
+  _version: String,
+  _registry: Registry,
+) -> Result(List(types.Dependency), ResolverError) {
+  Ok([])
 }
 
 /// 실제 레지스트리 — 패키지 + 버전 정보 함께 반환
@@ -85,6 +103,20 @@ pub fn resolve_full_with(
   config: KirConfig,
   existing_lock: Result(KirLock, Nil),
   fetch: FetchVersions,
+) -> Result(ResolveResult, ResolverError) {
+  resolve_full_with_deps(
+    config,
+    existing_lock,
+    fetch,
+    fetch_release_deps_from_registries,
+  )
+}
+
+fn resolve_full_with_deps(
+  config: KirConfig,
+  existing_lock: Result(KirLock, Nil),
+  fetch: FetchVersions,
+  fetch_deps: FetchReleaseDeps,
 ) -> Result(ResolveResult, ResolverError) {
   let direct_deps =
     list.flatten([
@@ -105,6 +137,7 @@ pub fn resolve_full_with(
     existing_lock,
     exclude_newer,
     fetch,
+    fetch_deps,
     [],
   )
 }
@@ -123,6 +156,7 @@ fn do_resolve(
   existing_lock: Result(KirLock, Nil),
   exclude_newer: Result(String, Nil),
   fetch: FetchVersions,
+  fetch_deps: FetchReleaseDeps,
   visited: List(String),
 ) -> Result(ResolveResult, ResolverError) {
   case queue {
@@ -154,6 +188,7 @@ fn do_resolve(
             existing_lock,
             exclude_newer,
             fetch,
+            fetch_deps,
             visited,
           )
         }
@@ -167,6 +202,14 @@ fn do_resolve(
                 exclude_newer,
                 fetch,
               ))
+              // 의존성이 비어있으면 개별 release API에서 조회
+              use vi <- result.try(enrich_dependencies(
+                vi,
+                pkg.name,
+                pkg.version,
+                dep.registry,
+                fetch_deps,
+              ))
               let new_resolved = dict.insert(resolved, key, pkg)
               let new_cache = dict.insert(version_cache, key, vi)
               let transitive = vi.dependencies
@@ -178,6 +221,7 @@ fn do_resolve(
                 existing_lock,
                 exclude_newer,
                 fetch,
+                fetch_deps,
                 [key, ..visited],
               )
             }
@@ -365,6 +409,51 @@ fn fetch_from_registries(
   }
 }
 
+fn fetch_release_deps_from_registries(
+  name: String,
+  version: String,
+  registry: Registry,
+) -> Result(List(types.Dependency), ResolverError) {
+  case registry {
+    Hex -> {
+      use deps <- result.try(
+        hex.get_release_deps(name, version)
+        |> result.map_error(fn(e) { RegistryError(string.inspect(e)) }),
+      )
+      Ok(
+        list.map(deps, fn(d) {
+          types.Dependency(
+            name: d.name,
+            version_constraint: d.requirement,
+            registry: Hex,
+            dev: False,
+          )
+        }),
+      )
+    }
+    // npm은 get_versions에서 이미 의존성 포함
+    Npm -> Ok([])
+  }
+}
+
+/// 의존성이 비어있으면 개별 release API에서 조회하여 VersionInfo 갱신
+fn enrich_dependencies(
+  vi: VersionInfo,
+  name: String,
+  version: String,
+  registry: Registry,
+  fetch_deps: FetchReleaseDeps,
+) -> Result(VersionInfo, ResolverError) {
+  case vi.dependencies {
+    [] -> {
+      use deps <- result.try(fetch_deps(name, version, registry))
+      Ok(VersionInfo(..vi, dependencies: deps))
+    }
+    // 이미 의존성이 있으면 그대로 사용 (npm, 테스트 mock)
+    _ -> Ok(vi)
+  }
+}
+
 fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) {
   use versions <- result.try(
     hex.get_versions(name)
@@ -380,17 +469,13 @@ fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
           <> "-"
           <> v.version
           <> ".tar",
-        dependencies: list.filter_map(v.dependencies, fn(d) {
-          case d.optional {
-            True -> Error(Nil)
-            False ->
-              Ok(types.Dependency(
-                name: d.name,
-                version_constraint: d.requirement,
-                registry: Hex,
-                dev: False,
-              ))
-          }
+        dependencies: list.map(v.dependencies, fn(d) {
+          types.Dependency(
+            name: d.name,
+            version_constraint: d.requirement,
+            registry: Hex,
+            dev: False,
+          )
         }),
         os: [],
         cpu: [],

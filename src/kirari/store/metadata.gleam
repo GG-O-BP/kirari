@@ -52,7 +52,11 @@ pub fn extract_from_package_json(
       dict.new(),
       decode.dict(decode.string, decode.string),
     )
-    use bin <- decode.optional_field("bin", dict.new(), bin_decoder())
+    use bin <- decode.optional_field(
+      "bin",
+      dict.new(),
+      bin_decoder_with_name(name),
+    )
     use os <- decode.optional_field("os", [], decode.list(decode.string))
     use cpu <- decode.optional_field("cpu", [], decode.list(decode.string))
     let script_names = dict.keys(scripts) |> list.sort(string.compare)
@@ -81,12 +85,13 @@ pub fn extract_from_package_json(
   }
 }
 
-/// bin 필드 디코더 — string 또는 object 형태 모두 처리
-fn bin_decoder() -> decode.Decoder(dict.Dict(String, String)) {
+/// bin 필드 디코더 — string("./cli.js") 또는 object({"cmd": "file.js"}) 형태 모두 처리
+fn bin_decoder_with_name(
+  name: String,
+) -> decode.Decoder(dict.Dict(String, String)) {
   decode.one_of(decode.dict(decode.string, decode.string), [
-    // "bin": "cli.js" 축약형 → {"name": "cli.js"} 로 변환 불가 (이름 필요)
-    // 실제로는 package.json의 name이 키가 되지만 여기서는 빈 dict 반환
-    decode.map(decode.string, fn(path) { dict.from_list([#("_default", path)]) }),
+    // "bin": "./cli.js" 축약형 → 패키지 이름을 명령어로 사용
+    decode.map(decode.string, fn(path) { dict.from_list([#(name, path)]) }),
   ])
 }
 

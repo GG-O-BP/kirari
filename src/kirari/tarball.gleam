@@ -1,5 +1,6 @@
 //// Hex/npm tarball 추출 — 레지스트리별 아카이브 형식 처리
 
+import gleam/bit_array
 import gleam/list
 import gleam/result
 import gleam/string
@@ -125,6 +126,7 @@ fn move_files(
 }
 
 /// Hex tarball 내부 CHECKSUM 파일 검증
+/// Hex v3 사양: CHECKSUM = SHA256(VERSION ++ metadata.config ++ contents.tar.gz)
 fn verify_hex_checksum(
   outer_dir: String,
   contents_data: BitArray,
@@ -133,7 +135,16 @@ fn verify_hex_checksum(
   case simplifile.read(checksum_path) {
     Ok(expected_raw) -> {
       let expected = string.trim(expected_raw) |> string.lowercase
-      let actual = security.sha256_hex(contents_data)
+      // Hex v3: VERSION + metadata.config + contents.tar.gz 연결 해시
+      let version_data =
+        simplifile.read_bits(outer_dir <> "/VERSION")
+        |> result.unwrap(<<>>)
+      let metadata_data =
+        simplifile.read_bits(outer_dir <> "/metadata.config")
+        |> result.unwrap(<<>>)
+      let combined =
+        bit_array.concat([version_data, metadata_data, contents_data])
+      let actual = security.sha256_hex(combined)
       case security.constant_time_equal(actual, expected) {
         True -> Ok(Nil)
         False ->
