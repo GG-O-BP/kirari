@@ -31,6 +31,16 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
       io.println("kirari " <> read_version())
       Ok(Nil)
     }
+    // format은 glint 밖에서 처리 (--check 등 플래그를 gleam에 직접 전달)
+    ["format", ..rest] -> {
+      let _ = config.normalize_gleam_toml(".")
+      let cmd = case rest {
+        [] -> "gleam format"
+        extra -> "gleam format " <> string.join(extra, " ")
+      }
+      output.run_gleam_cmd(cmd)
+      Ok(Nil)
+    }
     _ -> run_glint(args)
   }
 }
