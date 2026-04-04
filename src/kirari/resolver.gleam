@@ -35,6 +35,7 @@ pub type VersionInfo {
     has_scripts: Bool,
     signatures: List(#(String, String)),
     integrity: String,
+    deprecated: String,
   )
 }
 
@@ -50,9 +51,10 @@ pub type ResolveResult {
 pub type FetchVersions =
   fn(String, Registry) -> Result(List(VersionInfo), ResolverError)
 
-/// 선택된 버전의 의존성 조회 함수 타입 (Hex 개별 release API용)
+/// 선택된 버전의 의존성 + deprecated 정보 조회 함수 타입
 pub type FetchReleaseDeps =
-  fn(String, String, Registry) -> Result(List(types.Dependency), ResolverError)
+  fn(String, String, Registry) ->
+    Result(#(List(types.Dependency), String), ResolverError)
 
 // ---------------------------------------------------------------------------
 // 공개 API
@@ -86,8 +88,8 @@ fn no_op_fetch_deps(
   _name: String,
   _version: String,
   _registry: Registry,
-) -> Result(List(types.Dependency), ResolverError) {
-  Ok([])
+) -> Result(#(List(types.Dependency), String), ResolverError) {
+  Ok(#([], ""))
 }
 
 /// 실제 레지스트리 — 패키지 + 버전 정보 함께 반환
@@ -290,6 +292,7 @@ fn resolve_one(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ))
       Ok(#(pkg, vi))
     }
@@ -413,26 +416,29 @@ fn fetch_release_deps_from_registries(
   name: String,
   version: String,
   registry: Registry,
-) -> Result(List(types.Dependency), ResolverError) {
+) -> Result(#(List(types.Dependency), String), ResolverError) {
   case registry {
     Hex -> {
-      use deps <- result.try(
-        hex.get_release_deps(name, version)
+      use info <- result.try(
+        hex.get_release_info(name, version)
         |> result.map_error(fn(e) { RegistryError(string.inspect(e)) }),
       )
-      Ok(
-        list.map(deps, fn(d) {
+      let deps =
+        list.map(info.deps, fn(d) {
           types.Dependency(
             name: d.name,
             version_constraint: d.requirement,
             registry: Hex,
             dev: False,
           )
-        }),
-      )
+        })
+      let deprecated = case info.retired {
+        True -> "retired: " <> info.retirement_reason
+        False -> ""
+      }
+      Ok(#(deps, deprecated))
     }
-    // npm은 get_versions에서 이미 의존성 포함
-    Npm -> Ok([])
+    Npm -> Ok(#([], ""))
   }
 }
 
@@ -446,8 +452,8 @@ fn enrich_dependencies(
 ) -> Result(VersionInfo, ResolverError) {
   case vi.dependencies {
     [] -> {
-      use deps <- result.try(fetch_deps(name, version, registry))
-      Ok(VersionInfo(..vi, dependencies: deps))
+      use #(deps, deprecated) <- result.try(fetch_deps(name, version, registry))
+      Ok(VersionInfo(..vi, dependencies: deps, deprecated: deprecated))
     }
     // 이미 의존성이 있으면 그대로 사용 (npm, 테스트 mock)
     _ -> Ok(vi)
@@ -482,6 +488,7 @@ fn fetch_hex_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
         has_scripts: False,
         signatures: [],
         integrity: "",
+        deprecated: "",
       )
     }),
   )
@@ -511,6 +518,7 @@ fn fetch_npm_versions(name: String) -> Result(List(VersionInfo), ResolverError) 
         has_scripts: v.has_scripts,
         signatures: list.map(v.signatures, fn(s) { #(s.keyid, s.sig) }),
         integrity: v.integrity,
+        deprecated: v.deprecated,
       )
     }),
   )

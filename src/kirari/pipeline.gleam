@@ -59,8 +59,9 @@ pub fn run(
         bins -> Ok(#(dr.package.name, bins))
       }
     })
-  // 2. 스크립트 정책 경고
+  // 2. 스크립트 정책 경고 + deprecated/retired 경고
   warn_scripts(updated, security)
+  warn_deprecated(updated, ctx)
   // 3. 프로젝트에 설치
   use _ <- result.try(
     installer.install_all(updated, project_dir)
@@ -99,6 +100,24 @@ fn warn_scripts(
       <> pkg.version
       <> " has install scripts (blocked by npm-scripts policy)",
     )
+  })
+}
+
+fn warn_deprecated(packages: List(ResolvedPackage), ctx: DownloadContext) -> Nil {
+  list.each(packages, fn(pkg) {
+    let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
+    case dict.get(ctx.version_infos, key) {
+      Ok(vi) if vi.deprecated != "" ->
+        io.println(
+          "\u{26a0} "
+          <> pkg.name
+          <> "@"
+          <> pkg.version
+          <> " is deprecated: "
+          <> vi.deprecated,
+        )
+      _ -> Nil
+    }
   })
 }
 

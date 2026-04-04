@@ -82,6 +82,7 @@ fn test_version_infos() -> dict.Dict(String, VersionInfo) {
         has_scripts: False,
         signatures: [],
         integrity: "",
+        deprecated: "",
       ),
     ),
     #(
@@ -96,6 +97,7 @@ fn test_version_infos() -> dict.Dict(String, VersionInfo) {
         has_scripts: False,
         signatures: [],
         integrity: "",
+        deprecated: "",
       ),
     ),
   ])
@@ -198,6 +200,7 @@ pub fn transitive_deps_tree_test() {
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ),
       #(
@@ -212,6 +215,7 @@ pub fn transitive_deps_tree_test() {
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ),
     ])

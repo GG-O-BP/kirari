@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(kir *)",
       "Bash(gleam *)",
       "Bash(git *)",
       "Bash(mkdir *)",
@@ -30,7 +31,7 @@
           {
             "type": "command",
             "if": "Edit(**.gleam)",
-            "command": "gleam format 2>/dev/null || true",
+            "command": "kir format 2>/dev/null || gleam format 2>/dev/null || true",
             "timeout": 30
           }
         ]
@@ -41,7 +42,7 @@
           {
             "type": "command",
             "if": "Write(**.gleam)",
-            "command": "gleam format 2>/dev/null || true",
+            "command": "kir format 2>/dev/null || gleam format 2>/dev/null || true",
             "timeout": 30
           }
         ]

@@ -207,6 +207,14 @@ pub fn from_packages(packages: List(ResolvedPackage)) -> KirLock {
   KirLock(version: 1, packages: list.sort(packages, types.compare_packages))
 }
 
+/// lock에서 지정된 패키지를 제거 (선택적 업데이트용)
+pub fn remove_packages(lock: KirLock, names: List(String)) -> KirLock {
+  KirLock(
+    ..lock,
+    packages: list.filter(lock.packages, fn(p) { !list.contains(names, p.name) }),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // 패키지 조회
 // ---------------------------------------------------------------------------

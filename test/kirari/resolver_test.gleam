@@ -31,6 +31,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -42,6 +43,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -53,6 +55,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ])
     "gleam_json", Hex ->
@@ -74,6 +77,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ])
     "highlight.js", Npm ->
@@ -88,6 +92,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -99,6 +104,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -110,6 +116,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ])
     // 다이아몬드 충돌 테스트용
@@ -132,6 +139,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ])
     "pkg_b", Hex ->
@@ -153,6 +161,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ])
     "pkg_shared", Hex ->
@@ -167,6 +176,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
         VersionInfo(
           tarball_url: "",
@@ -178,6 +188,7 @@ fn mock_fetch(
           has_scripts: False,
           signatures: [],
           integrity: "",
+          deprecated: "",
         ),
       ])
     _, _ -> Error(resolver.PackageNotFound(name, registry))

@@ -4,6 +4,8 @@ import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option
+import gleam/order
 import gleam/result
 import gleam/string
 import gleam_community/ansi
@@ -15,7 +17,10 @@ import kirari/lockfile
 import kirari/migrate
 import kirari/pipeline
 import kirari/platform
+import kirari/registry/hex as hex_registry
+import kirari/registry/npm as npm_registry
 import kirari/resolver
+import kirari/semver
 import kirari/store/gc
 import kirari/tree
 import kirari/types.{
@@ -67,6 +72,8 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["deps", "list"], do: deps_list_cmd())
   |> glint.add(at: ["deps", "download"], do: deps_download_cmd())
   |> glint.add(at: ["tree"], do: tree_cmd())
+  |> glint.add(at: ["outdated"], do: outdated_cmd())
+  |> glint.add(at: ["why"], do: why_cmd())
   |> glint.add(at: ["clean"], do: clean_cmd())
   |> glint.add(at: ["publish"], do: publish_cmd())
   |> glint.add(at: ["hex", "retire"], do: hex_retire_cmd())
@@ -241,12 +248,14 @@ fn print_help() -> Nil {
   io.println("  dev         Run the dev entrypoint")
   io.println("  init        Add kirari sections to gleam.toml")
   io.println("  install     Resolve and install dependencies")
-  io.println("  update      Update all to latest compatible versions")
-  io.println("  add         Add a dependency")
+  io.println("  update      Update dependencies (all or specific packages)")
+  io.println("  add         Add a dependency (supports pkg@version)")
   io.println("  remove      Remove a dependency")
+  io.println("  outdated    List outdated dependencies")
+  io.println("  why         Explain why a package is installed")
   io.println("  deps list   List all dependencies")
   io.println("  deps download  Download dependencies without installing")
-  io.println("  tree        Print dependency tree")
+  io.println("  tree        Print full dependency tree")
   io.println("  clean       Remove build artifacts and store cache")
   io.println("  publish     Publish package to Hex")
   io.println("  hex retire  Retire a Hex release")
@@ -315,12 +324,14 @@ fn add_cmd() -> glint.Command(Nil) {
     let is_npm = npm_flag(flags) |> result.unwrap(False)
     let is_dev = dev_flag(flags) |> result.unwrap(False)
     case args {
-      [name, ..] ->
-        case do_add(".", name, is_npm, is_dev) {
+      [raw_name, ..] -> {
+        let #(name, version) = parse_add_arg(raw_name, is_npm)
+        case do_add(".", name, version, is_npm, is_dev) {
           Ok(_) -> Nil
           Error(e) -> print_error(e)
         }
-      _ -> io.println("Usage: kir add <package> [--npm] [--dev]")
+      }
+      _ -> io.println("Usage: kir add <package[@version]> [--npm] [--dev]")
     }
   })
 }
@@ -346,11 +357,13 @@ fn remove_cmd() -> glint.Command(Nil) {
 }
 
 fn update_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help(
-    "Update all dependencies to latest compatible versions",
-  )
-  glint.command(fn(_named, _args, _flags) {
-    case do_update(".") {
+  use <- glint.command_help("Update dependencies (all or specific packages)")
+  glint.command(fn(_named, args, _flags) {
+    let result = case args {
+      [] -> do_update(".")
+      packages -> do_update_selective(".", packages)
+    }
+    case result {
       Ok(_) -> Nil
       Error(e) -> print_error(e)
     }
@@ -382,7 +395,16 @@ fn build_cmd() -> glint.Command(Nil) {
 }
 
 fn run_cmd() -> glint.Command(Nil) {
-  install_then_gleam_cmd("Run the project", "gleam run")
+  use <- glint.command_help("Run the project")
+  glint.command(fn(_named, args, _flags) {
+    let _ = config.normalize_gleam_toml(".")
+    let _ = do_install_quiet(".")
+    let cmd = case args {
+      [] -> "gleam run"
+      extra -> "gleam run -- " <> string.join(extra, " ")
+    }
+    run_gleam_cmd(cmd)
+  })
 }
 
 fn test_cmd() -> glint.Command(Nil) {
@@ -674,9 +696,139 @@ fn do_update(dir: String) -> Result(Nil, KirError) {
   Ok(Nil)
 }
 
+/// pkg@version 형식 파싱 (scoped npm 패키지 @scope/pkg@ver 처리)
+fn parse_add_arg(raw: String, is_npm: Bool) -> #(String, String) {
+  let is_scoped_npm = is_npm || string.starts_with(raw, "@")
+  let default_version = case is_scoped_npm {
+    True -> "*"
+    False -> ">= 0.0.0"
+  }
+  let #(name, ver) = case is_scoped_npm {
+    True -> {
+      let without_prefix = string.drop_start(raw, 1)
+      case string.split(without_prefix, "@") {
+        [scope_and_name] -> #("@" <> scope_and_name, default_version)
+        [scope_and_name, ver] -> #("@" <> scope_and_name, ver)
+        _ -> #(raw, default_version)
+      }
+    }
+    False ->
+      case string.split(raw, "@") {
+        [n] -> #(n, default_version)
+        [n, v] -> #(n, v)
+        _ -> #(raw, default_version)
+      }
+  }
+  // Hex: 단축 버전 → Hex SemVer 변환
+  case is_scoped_npm {
+    True -> #(name, ver)
+    False -> #(name, normalize_hex_version(ver))
+  }
+}
+
+/// 단축 버전을 Hex SemVer 형식으로 변환
+/// "3" → ">= 3.0.0 and < 4.0.0"
+/// "3.1" → ">= 3.1.0 and < 4.0.0"
+/// "3.1.0" → ">= 3.1.0 and < 4.0.0"
+/// "^3.0" → ">= 3.0.0 and < 4.0.0"
+/// "~3.1" → ">= 3.1.0 and < 3.2.0"
+/// ">= 1.0.0" 등 이미 Hex 형식이면 그대로
+fn normalize_hex_version(ver: String) -> String {
+  // 이미 Hex SemVer 형식 (>=, and, <)이면 그대로
+  case
+    string.contains(ver, ">=")
+    || string.contains(ver, "and")
+    || string.contains(ver, ">= 0.0.0")
+  {
+    True -> ver
+    False -> {
+      // ^ prefix 제거
+      let cleaned = case string.starts_with(ver, "^") {
+        True -> string.drop_start(ver, 1)
+        False -> ver
+      }
+      let is_tilde = string.starts_with(ver, "~")
+      let cleaned = case is_tilde {
+        True -> string.drop_start(cleaned, 1)
+        False -> cleaned
+      }
+      // 버전 파싱
+      let parts = string.split(cleaned, ".")
+      case parts {
+        [major_s] ->
+          case int.parse(major_s) {
+            Ok(major) ->
+              ">= "
+              <> int.to_string(major)
+              <> ".0.0 and < "
+              <> int.to_string(major + 1)
+              <> ".0.0"
+            Error(_) -> ver
+          }
+        [major_s, minor_s] ->
+          case int.parse(major_s), int.parse(minor_s) {
+            Ok(major), Ok(minor) ->
+              case is_tilde {
+                True ->
+                  ">= "
+                  <> int.to_string(major)
+                  <> "."
+                  <> int.to_string(minor)
+                  <> ".0 and < "
+                  <> int.to_string(major)
+                  <> "."
+                  <> int.to_string(minor + 1)
+                  <> ".0"
+                False ->
+                  ">= "
+                  <> int.to_string(major)
+                  <> "."
+                  <> int.to_string(minor)
+                  <> ".0 and < "
+                  <> int.to_string(major + 1)
+                  <> ".0.0"
+              }
+            _, _ -> ver
+          }
+        [major_s, minor_s, patch_s] ->
+          case int.parse(major_s), int.parse(minor_s), int.parse(patch_s) {
+            Ok(major), Ok(minor), Ok(patch) ->
+              case is_tilde {
+                True ->
+                  ">= "
+                  <> int.to_string(major)
+                  <> "."
+                  <> int.to_string(minor)
+                  <> "."
+                  <> int.to_string(patch)
+                  <> " and < "
+                  <> int.to_string(major)
+                  <> "."
+                  <> int.to_string(minor + 1)
+                  <> ".0"
+                False ->
+                  ">= "
+                  <> int.to_string(major)
+                  <> "."
+                  <> int.to_string(minor)
+                  <> "."
+                  <> int.to_string(patch)
+                  <> " and < "
+                  <> int.to_string(major + 1)
+                  <> ".0.0"
+              }
+            _, _, _ -> ver
+          }
+        _ -> ver
+      }
+    }
+  }
+}
+
 fn do_add(
   dir: String,
   name: String,
+  version_constraint: String,
   is_npm: Bool,
   is_dev: Bool,
 ) -> Result(Nil, KirError) {
@@ -691,10 +843,7 @@ fn do_add(
   let dep =
     Dependency(
       name: name,
-      version_constraint: case registry {
-        Hex -> ">= 0.0.0"
-        Npm -> "*"
-      },
+      version_constraint: version_constraint,
       registry: registry,
       dev: is_dev,
     )
@@ -960,4 +1109,280 @@ fn warn_undeclared_npm(dir: String, cfg: KirConfig) -> Nil {
     }
     Error(_) -> Nil
   }
+}
+
+// ---------------------------------------------------------------------------
+// 선택적 업데이트
+// ---------------------------------------------------------------------------
+
+fn do_update_selective(
+  dir: String,
+  packages: List(String),
+) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  use lock <- result.try(
+    lockfile.read(dir)
+    |> result.map_error(LockErr),
+  )
+  io.println("Updating " <> string.join(packages, ", ") <> "...")
+  // 지정된 패키지만 lock에서 제거, 나머지 유지
+  let filtered_lock = lockfile.remove_packages(lock, packages)
+  use resolve_result <- result.try(
+    resolver.resolve_full(cfg, Ok(filtered_lock))
+    |> result.map_error(ResolveErr),
+  )
+  io.println(
+    ansi.green("Resolved")
+    <> " "
+    <> int.to_string(list.length(resolve_result.packages))
+    <> " packages",
+  )
+  io.println("Downloading and installing...")
+  use pipeline_result <- result.try(
+    pipeline.run(resolve_result, dir, cfg.security)
+    |> result.map_error(PipelineErr),
+  )
+  let installed = pipeline_result.packages
+  let new_lock = lockfile.from_packages(installed)
+  use _ <- result.try(
+    lockfile.write(new_lock, dir)
+    |> result.map_error(LockErr),
+  )
+  io.println(
+    ansi.green("Updated")
+    <> " "
+    <> string.join(packages, ", ")
+    <> ", wrote kir.lock",
+  )
+  let _ = export.write_build_metadata(cfg, new_lock, dir)
+  Ok(Nil)
+}
+
+// ---------------------------------------------------------------------------
+// outdated
+// ---------------------------------------------------------------------------
+
+fn outdated_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("List outdated dependencies")
+  glint.command(fn(_named, _args, _flags) {
+    case do_outdated(".") {
+      Ok(_) -> Nil
+      Error(e) -> print_error(e)
+    }
+  })
+}
+
+fn do_outdated(dir: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  use lock <- result.try(
+    lockfile.read(dir)
+    |> result.map_error(LockErr),
+  )
+  let all_deps =
+    list.flatten([
+      cfg.hex_deps,
+      cfg.hex_dev_deps,
+      cfg.npm_deps,
+      cfg.npm_dev_deps,
+    ])
+  let direct_names = list.map(all_deps, fn(d) { #(d.name, d.registry) })
+  // 직접 의존성 중 lock에 있는 것만 확인
+  let outdated =
+    list.filter_map(direct_names, fn(pair) {
+      let #(name, registry) = pair
+      case lockfile.find_package(lock, name, registry) {
+        option.Some(pkg) -> {
+          let latest = get_latest_version(name, registry)
+          case latest {
+            Ok(latest_ver) ->
+              case
+                semver.parse_version(pkg.version),
+                semver.parse_version(latest_ver)
+              {
+                Ok(current), Ok(latest_parsed) ->
+                  case semver.compare(latest_parsed, current) {
+                    order.Gt ->
+                      Ok(#(
+                        name,
+                        pkg.version,
+                        latest_ver,
+                        types.registry_to_string(registry),
+                      ))
+                    _ -> Error(Nil)
+                  }
+                _, _ -> Error(Nil)
+              }
+            Error(_) -> Error(Nil)
+          }
+        }
+        option.None -> Error(Nil)
+      }
+    })
+  case outdated {
+    [] -> {
+      io.println(ansi.green("All dependencies are up to date"))
+      Ok(Nil)
+    }
+    _ -> {
+      io.println(
+        pad_right("Package", 24)
+        <> pad_right("Current", 12)
+        <> pad_right("Latest", 12)
+        <> "Registry",
+      )
+      list.each(outdated, fn(entry) {
+        let #(name, current, latest, registry) = entry
+        io.println(
+          pad_right(name, 24)
+          <> pad_right(current, 12)
+          <> pad_right(latest, 12)
+          <> registry,
+        )
+      })
+      Ok(Nil)
+    }
+  }
+}
+
+fn get_latest_version(
+  name: String,
+  registry: types.Registry,
+) -> Result(String, Nil) {
+  case registry {
+    Hex ->
+      case hex_registry.get_versions(name) {
+        Ok(versions) ->
+          list.map(versions, fn(v) { v.version })
+          |> list.filter_map(semver.parse_version)
+          |> list.sort(semver.compare)
+          |> list.last
+          |> result.map(semver.to_string)
+        Error(_) -> Error(Nil)
+      }
+    Npm ->
+      case npm_registry.get_versions(name) {
+        Ok(versions) ->
+          list.map(versions, fn(v) { v.version })
+          |> list.filter_map(semver.parse_version)
+          |> list.sort(semver.compare)
+          |> list.last
+          |> result.map(semver.to_string)
+        Error(_) -> Error(Nil)
+      }
+  }
+}
+
+fn pad_right(s: String, width: Int) -> String {
+  let len = string.length(s)
+  case len >= width {
+    True -> s <> " "
+    False -> s <> string.repeat(" ", width - len)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// why
+// ---------------------------------------------------------------------------
+
+fn why_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Explain why a package is installed")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [name, ..] ->
+        case do_why(".", name) {
+          Ok(_) -> Nil
+          Error(e) -> print_error(e)
+        }
+      _ -> io.println("Usage: kir why <package>")
+    }
+  })
+}
+
+fn do_why(dir: String, pkg_name: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  use lock <- result.try(
+    lockfile.read(dir)
+    |> result.map_error(LockErr),
+  )
+  // 패키지가 lock에 있는지 확인
+  case list.find(lock.packages, fn(p) { p.name == pkg_name }) {
+    Error(_) -> {
+      io.println(pkg_name <> " is not installed")
+      Ok(Nil)
+    }
+    Ok(pkg) -> {
+      io.println(
+        pkg.name
+        <> "@"
+        <> pkg.version
+        <> " ("
+        <> types.registry_to_string(pkg.registry)
+        <> ")",
+      )
+      // 직접 의존성인지 확인
+      let all_deps =
+        list.flatten([
+          cfg.hex_deps,
+          cfg.hex_dev_deps,
+          cfg.npm_deps,
+          cfg.npm_dev_deps,
+        ])
+      let is_direct =
+        list.any(all_deps, fn(d) {
+          d.name == pkg_name && d.registry == pkg.registry
+        })
+      case is_direct {
+        True -> {
+          let section = case pkg.registry {
+            Hex -> "[dependencies]"
+            Npm -> "[npm-dependencies]"
+          }
+          io.println("  direct dependency in " <> section)
+        }
+        False -> {
+          // version_infos에서 이 패키지를 의존하는 패키지 찾기
+          let version_infos = case resolver.resolve_full(cfg, Ok(lock)) {
+            Ok(resolve_result) -> resolve_result.version_infos
+            Error(_) -> dict.new()
+          }
+          let dependents = find_dependents(pkg_name, version_infos, lock)
+          case dependents {
+            [] -> io.println("  (dependency chain unknown)")
+            _ ->
+              list.each(dependents, fn(dep_name) {
+                io.println("  required by " <> dep_name)
+              })
+          }
+        }
+      }
+      Ok(Nil)
+    }
+  }
+}
+
+fn find_dependents(
+  pkg_name: String,
+  version_infos: dict.Dict(String, resolver.VersionInfo),
+  lock: types.KirLock,
+) -> List(String) {
+  list.filter_map(lock.packages, fn(p) {
+    let key = p.name <> ":" <> types.registry_to_string(p.registry)
+    case dict.get(version_infos, key) {
+      Ok(vi) ->
+        case list.any(vi.dependencies, fn(d) { d.name == pkg_name }) {
+          True -> Ok(p.name <> "@" <> p.version)
+          False -> Error(Nil)
+        }
+      Error(_) -> Error(Nil)
+    }
+  })
 }

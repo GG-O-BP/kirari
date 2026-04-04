@@ -55,11 +55,20 @@ pub fn get_versions(name: String) -> Result(List(PackageVersion), HexError) {
   }
 }
 
-/// 특정 버전의 의존성 정보를 개별 release API에서 조회
-pub fn get_release_deps(
+/// 개별 release API 응답 (의존성 + retirement 정보)
+pub type ReleaseInfo {
+  ReleaseInfo(
+    deps: List(VersionDependency),
+    retired: Bool,
+    retirement_reason: String,
+  )
+}
+
+/// 특정 버전의 의존성 + retirement 정보를 개별 release API에서 조회
+pub fn get_release_info(
   name: String,
   version: String,
-) -> Result(List(VersionDependency), HexError) {
+) -> Result(ReleaseInfo, HexError) {
   let url = "https://hex.pm/api/packages/" <> name <> "/releases/" <> version
   use req <- result.try(
     request.to(url)
@@ -71,14 +80,24 @@ pub fn get_release_deps(
     |> result.map_error(fn(e) { NetworkError(string.inspect(e)) }),
   )
   case resp.status {
-    200 -> parse_release_deps(resp.body)
+    200 -> parse_release_info(resp.body)
     404 -> Error(PackageNotFound(name <> "@" <> version))
     status -> Error(ApiError(status, resp.body))
   }
 }
 
-fn parse_release_deps(body: String) -> Result(List(VersionDependency), HexError) {
-  let decoder = {
+/// 호환성 래퍼: 의존성만 반환
+pub fn get_release_deps(
+  name: String,
+  version: String,
+) -> Result(List(VersionDependency), HexError) {
+  use info <- result.try(get_release_info(name, version))
+  Ok(info.deps)
+}
+
+fn parse_release_info(body: String) -> Result(ReleaseInfo, HexError) {
+  // 1단계: requirements 파싱
+  let deps_decoder = {
     use deps <- decode.optional_field(
       "requirements",
       [],
@@ -86,8 +105,36 @@ fn parse_release_deps(body: String) -> Result(List(VersionDependency), HexError)
     )
     decode.success(deps)
   }
-  json.parse(body, decoder)
-  |> result.map_error(fn(e) { ParseResponseError(string.inspect(e)) })
+  use deps <- result.try(
+    json.parse(body, deps_decoder)
+    |> result.map_error(fn(e) { ParseResponseError(string.inspect(e)) }),
+  )
+  // 2단계: retirement 파싱 (null 안전)
+  let retirement = parse_retirement(body)
+  Ok(ReleaseInfo(
+    deps: deps,
+    retired: retirement.0,
+    retirement_reason: retirement.1,
+  ))
+}
+
+fn parse_retirement(body: String) -> #(Bool, String) {
+  let decoder = {
+    use reason <- decode.optional_field("reason", "", decode.string)
+    use message <- decode.optional_field("message", "", decode.string)
+    decode.success(#(reason, message))
+  }
+  // retirement 필드가 null이거나 없으면 기본값
+  let retirement_decoder = {
+    use retirement <- decode.optional_field("retirement", #("", ""), decoder)
+    decode.success(retirement)
+  }
+  case json.parse(body, retirement_decoder) {
+    Ok(#("", "")) -> #(False, "")
+    Ok(#(reason, "")) -> #(True, reason)
+    Ok(#(reason, message)) -> #(True, reason <> ": " <> message)
+    Error(_) -> #(False, "")
+  }
 }
 
 /// 패키지 tarball을 다운로드하고 SHA256 해시를 함께 반환
