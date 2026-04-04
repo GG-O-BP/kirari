@@ -4,6 +4,7 @@ import gleam/io
 import gleam/result
 import gleam/string
 import glint
+import kirari/audit
 import kirari/cli/error
 import kirari/cli/install
 import kirari/cli/output
@@ -86,6 +87,7 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
     do: gleam_passthrough_cmd("Manage package ownership", "gleam hex owner"),
   )
   |> glint.add(at: ["license"], do: license_cmd())
+  |> glint.add(at: ["audit"], do: audit_cmd())
   |> glint.add(at: ["build"], do: build_cmd())
   |> glint.add(at: ["run"], do: run_cmd())
   |> glint.add(at: ["test"], do: test_cmd())
@@ -555,6 +557,33 @@ fn license_cmd() -> glint.Command(Nil) {
   })
 }
 
+fn audit_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Audit dependencies for known vulnerabilities")
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output results as JSON"),
+  )
+  use severity_flag <- glint.flag(
+    glint.string_flag("severity")
+    |> glint.flag_default("low")
+    |> glint.flag_help(
+      "Minimum severity to report: low, moderate, high, critical",
+    ),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    let severity_str = severity_flag(flags) |> result.unwrap("low")
+    let severity =
+      audit.severity_from_string(severity_str) |> result.unwrap(audit.Low)
+    case query.do_audit(".", json, severity) {
+      Ok(True) -> platform.halt(1)
+      Ok(False) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // 헬퍼
 // ---------------------------------------------------------------------------
@@ -593,6 +622,7 @@ fn print_help() -> Nil {
   io.println("  hex owner   Manage package ownership")
   io.println("  store verify  Verify cached package integrity")
   io.println("  license     Audit dependency licenses")
+  io.println("  audit       Audit dependencies for vulnerabilities")
   io.println("  export      Export manifest.toml + package.json")
   io.println("  export sbom Export SBOM (SPDX/CycloneDX)")
   io.println("  format      Format source code")

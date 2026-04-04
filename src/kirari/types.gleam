@@ -116,6 +116,7 @@ pub type SecurityConfig {
     npm_scripts: ScriptPolicy,
     provenance: ProvenancePolicy,
     license_policy: LicensePolicy,
+    audit_ignore: List(String),
   )
 }
 
@@ -126,6 +127,7 @@ pub fn default_security_config() -> SecurityConfig {
     npm_scripts: DenyAll,
     provenance: ProvenanceWarn,
     license_policy: LicenseNoPolicy,
+    audit_ignore: [],
   )
 }
 

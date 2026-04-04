@@ -47,6 +47,7 @@ kir.toml은 존재하지 않는다.
 | `kir doctor` | 환경 진단 (Erlang, Gleam, store, config, lock) |
 | `kir store verify` | 캐시 패키지 무결성 검증 |
 | `kir license` | 의존성 라이선스 감사 (SPDX 파싱, allow/deny 정책) |
+| `kir audit [--json] [--severity=LEVEL]` | CVE/advisory 취약점 검사 (GHSA + npm audit) |
 | `kir clean [--store] [--keep-cache]` | build/ + node_modules/ 삭제, --store로 GC |
 | `kir build/run/test/check/dev` | 의존성 동기화 후 gleam 명령어 실행 |
 | `kir format/fix/new/shell/lsp` | gleam 명령어 직접 위임 |

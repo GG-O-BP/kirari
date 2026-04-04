@@ -18,6 +18,7 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Bin executables** — auto-creates `node_modules/.bin/` symlinks (Unix) or `.cmd` wrappers (Windows)
 - **Store GC** — `kir clean --store` with immutability-aware retention (Hex: never expires, npm: 90 days); customizable store path via `KIR_STORE` env var
 - **License compliance** — SPDX 2.3 expression parser, per-dependency license auditing with allow/deny policy, `kir license` command
+- **Vulnerability audit** — `kir audit` checks installed packages against GitHub Advisory Database (Hex/Erlang) and npm bulk advisory API, with severity filtering, `--json` output for CI, and configurable ignore list
 - **Deprecation warnings** — Hex retired and npm deprecated packages are flagged during install
 - **Duplicate declaration warning** — detects packages declared in both `[dependencies]` and `[dev-dependencies]`
 - **SemVer 2.0.0 compliant** — pre-release identifier sorting, build metadata parsing (`+build` ignored in comparison), single-digit version padding (`"1"` → `1.0.0`)
@@ -115,6 +116,7 @@ gleam build
 | `kir doctor` | Diagnose environment (Erlang, Gleam, store, config, lock) |
 | `kir store verify` | Verify cached package integrity in the global store |
 | `kir license` | Audit dependency licenses against allow/deny policy |
+| `kir audit [--json] [--severity=<LEVEL>]` | Audit dependencies for known vulnerabilities (GHSA + npm advisory) |
 
 ### Build & Run
 
@@ -175,6 +177,8 @@ These pass through to Gleam directly:
 - `--dry-run` — Simulate publish without uploading (for `publish`).
 - `--store` — Also garbage-collect `~/.kir/store/` when cleaning (for `clean`).
 - `--keep-cache` — Preserve Gleam compilation cache when cleaning (for `clean`).
+- `--json` — Machine-readable JSON output (for `audit`).
+- `--severity=<LEVEL>` — Minimum severity to report: `low`, `moderate`, `high`, `critical` (for `audit`).
 
 ## gleam.toml
 
@@ -205,6 +209,7 @@ npm-scripts = "deny"
 npm-scripts-allow = ["esbuild", "sharp"]
 provenance = "warn"
 license-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC"]
+audit-ignore = ["GHSA-xxxx-xxxx-xxxx"]
 ```
 
 `[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, and `[security]` are kirari extensions that Gleam silently ignores.
@@ -219,6 +224,7 @@ license-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC"]
 | `provenance` | `"ignore"`, `"warn"`, `"require"` | `"warn"` | npm Sigstore provenance verification policy — `warn` logs failures, `require` blocks install |
 | `license-allow` | string array | `[]` | Allowlist of SPDX license IDs — `kir license` reports violations for packages not matching |
 | `license-deny` | string array | `[]` | Denylist of SPDX license IDs — `kir license` reports violations for packages matching |
+| `audit-ignore` | string array | `[]` | Advisory IDs (GHSA/CVE) to suppress in `kir audit` results |
 
 ## kir.lock
 
@@ -308,6 +314,7 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Installed list** | Not available | `kir ls` shows installed packages with paths and status |
 | **Environment diagnosis** | Not available | `kir doctor` checks Erlang, Gleam, store, config, lock |
 | **Store verification** | Not available | `kir store verify` checks cached package integrity |
+| **Vulnerability audit** | Not available | `kir audit` checks against GitHub Advisory Database + npm advisory API, with severity filtering and JSON output |
 | **FFI import detection** | Not available | Warns about undeclared npm bare imports after install |
 | **Selective update** | Not available | `kir update <pkg>` updates specific packages only |
 | **Offline install** | Not available | `kir install --offline` installs from cache without registry |
@@ -325,13 +332,17 @@ src/kirari/
     error.gleam           KirError type + error formatting
     output.gleam          Color helpers, warning printers, gleam command runner
     install.gleam         Workflow commands (init, install, update, add, remove, clean, publish)
-    query.gleam           Read-only commands (outdated, why, diff, ls, doctor, license)
+    query.gleam           Read-only commands (outdated, why, diff, ls, doctor, license, audit)
   types.gleam             Shared domain types
   config.gleam            gleam.toml parsing/serialization (native + kirari sections)
   migrate.gleam           package.json migration for kir init
   semver.gleam            SemVer parsing, Hex + npm constraint matching
   spdx.gleam              SPDX 2.3 license expression parser (recursive descent)
   license.gleam           License compliance engine (allow/deny policy, violation detection)
+  audit.gleam             Vulnerability audit engine (advisory matching, severity filtering, JSON output)
+  audit/
+    ghsa.gleam            GitHub Advisory Database REST API client (Erlang ecosystem, cached)
+    npm_audit.gleam       npm bulk advisory POST API client
   resolver.gleam          Dependency resolution with transitive deps + diamond conflict detection
   lockfile.gleam          kir.lock read/write + structured diff
   pipeline.gleam          Download → verify → store → install orchestration

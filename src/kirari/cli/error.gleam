@@ -1,6 +1,7 @@
 //// CLI 에러 타입 — 모든 모듈 에러를 래핑하는 최상위 에러
 
 import gleam/string
+import kirari/audit
 import kirari/config
 import kirari/export
 import kirari/ffi as ffi_detect
@@ -21,6 +22,7 @@ pub type KirError {
   PipelineErr(pipeline.PipelineError)
   ExportErr(export.ExportError)
   LicenseErr(license.LicenseError)
+  AuditErr(audit.AuditError)
   FfiErr(ffi_detect.FfiError)
   UserError(detail: String)
 }
@@ -89,6 +91,13 @@ pub fn format_error(error: KirError) -> String {
     ExportErr(e) ->
       case e {
         export.WriteError(p, d) -> "export write error " <> p <> ": " <> d
+      }
+    AuditErr(e) ->
+      case e {
+        audit.AdvisoryFetchError(source, detail) ->
+          "advisory fetch failed (" <> source <> "): " <> detail
+        audit.AdvisoryParseError(source, detail) ->
+          "advisory parse error (" <> source <> "): " <> detail
       }
     FfiErr(e) ->
       case e {

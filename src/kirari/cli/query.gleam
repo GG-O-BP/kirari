@@ -1,4 +1,4 @@
-//// CLI 조회 커맨드 — outdated, why, diff, ls, doctor, store verify
+//// CLI 조회 커맨드 — outdated, why, diff, ls, doctor, store verify, audit
 
 import gleam/dict
 import gleam/int
@@ -8,6 +8,9 @@ import gleam/option
 import gleam/order
 import gleam/result
 import gleam/string
+import kirari/audit
+import kirari/audit/ghsa
+import kirari/audit/npm_audit
 import kirari/cli/error.{type KirError, ConfigErr, LockErr, ResolveErr}
 import kirari/cli/output
 import kirari/config
@@ -452,5 +455,178 @@ pub fn do_license(dir: String) -> Result(Nil, KirError) {
       })
       Ok(Nil)
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// audit
+// ---------------------------------------------------------------------------
+
+/// 의존성 취약점 감사 — advisory 데이터베이스 연동
+/// 반환: Ok(True) = 취약점 발견, Ok(False) = 클린
+pub fn do_audit(
+  dir: String,
+  json_output: Bool,
+  severity_threshold: audit.Severity,
+) -> Result(Bool, KirError) {
+  use cfg <- result.try(config.read_config(dir) |> result.map_error(ConfigErr))
+  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
+  // advisory 소스별 조회 (한쪽 실패해도 계속 진행)
+  let ghsa_result = ghsa.fetch_advisories()
+  let npm_result = npm_audit.fetch_advisories(lock.packages)
+  // 경고 출력 + 결과 수집
+  let ghsa_advisories = case ghsa_result {
+    Ok(advisories) -> advisories
+    Error(e) -> {
+      let detail = format_ghsa_error(e)
+      case json_output {
+        False ->
+          io.println(
+            output.color_yellow("warning")
+            <> ": GHSA advisory fetch failed: "
+            <> detail,
+          )
+        True -> Nil
+      }
+      []
+    }
+  }
+  let npm_advisories = case npm_result {
+    Ok(advisories) -> advisories
+    Error(e) -> {
+      let detail = format_npm_audit_error(e)
+      case json_output {
+        False ->
+          io.println(
+            output.color_yellow("warning")
+            <> ": npm advisory fetch failed: "
+            <> detail,
+          )
+        True -> Nil
+      }
+      []
+    }
+  }
+  let all_advisories = audit.merge_advisories([ghsa_advisories, npm_advisories])
+  let audit_result =
+    audit.check(
+      lock.packages,
+      all_advisories,
+      severity_threshold,
+      cfg.security.audit_ignore,
+    )
+  case json_output {
+    True -> {
+      io.println(audit.to_json(audit_result))
+      Ok(audit_result.vulnerabilities != [])
+    }
+    False -> {
+      print_audit_result(audit_result)
+      Ok(audit_result.vulnerabilities != [])
+    }
+  }
+}
+
+fn print_audit_result(result: audit.AuditResult) -> Nil {
+  case result.vulnerabilities {
+    [] -> {
+      io.println(
+        output.color_green("No known vulnerabilities found")
+        <> " in "
+        <> int.to_string(result.packages_scanned)
+        <> " packages",
+      )
+      Nil
+    }
+    vulns -> {
+      io.println("Vulnerability audit:")
+      io.println("")
+      list.each(vulns, print_vulnerability)
+      io.println("")
+      // 요약
+      let counts = audit.count_by_severity(vulns)
+      let summary_parts =
+        list.map(counts, fn(pair) {
+          let #(sev, count) = pair
+          int.to_string(count) <> " " <> audit.severity_to_string(sev)
+        })
+      io.println(
+        output.color_red(
+          "Found " <> int.to_string(list.length(vulns)) <> " vulnerabilities",
+        )
+        <> " in "
+        <> int.to_string(result.packages_scanned)
+        <> " packages ("
+        <> string.join(summary_parts, ", ")
+        <> ")",
+      )
+      Nil
+    }
+  }
+}
+
+fn print_vulnerability(v: audit.Vulnerability) -> Nil {
+  let sev_label =
+    string.uppercase(audit.severity_to_string(v.advisory.severity))
+  let colored_sev = case v.advisory.severity {
+    audit.Critical | audit.High -> output.color_bold_red(sev_label)
+    audit.Moderate -> output.color_red(sev_label)
+    audit.Low -> output.color_yellow(sev_label)
+    audit.Unknown -> output.color_dim(sev_label)
+  }
+  io.println(
+    "  "
+    <> colored_sev
+    <> "  "
+    <> v.package_name
+    <> "@"
+    <> v.installed_version
+    <> " ("
+    <> types.registry_to_string(v.registry)
+    <> ")",
+  )
+  // ID + aliases
+  let id_line = case v.advisory.aliases {
+    [] -> v.advisory.id
+    aliases -> v.advisory.id <> " / " <> string.join(aliases, ", ")
+  }
+  io.println("    " <> output.color_dim(id_line))
+  // summary
+  case v.advisory.summary {
+    "" -> Nil
+    summary -> io.println("    " <> summary)
+  }
+  // affected range
+  case v.advisory.vulnerable_range {
+    "" -> Nil
+    range -> io.println("    Affected: " <> range)
+  }
+  // fix
+  case v.advisory.patched_versions {
+    "" -> io.println("    " <> output.color_yellow("No fix available"))
+    fix -> io.println("    Fix: upgrade to " <> fix)
+  }
+  // url
+  case v.advisory.url {
+    "" -> Nil
+    url -> io.println("    " <> output.color_dim(url))
+  }
+  io.println("")
+}
+
+fn format_ghsa_error(e: ghsa.GhsaError) -> String {
+  case e {
+    ghsa.NetworkError(d) -> d
+    ghsa.ApiError(status, _) -> "HTTP " <> int.to_string(status)
+    ghsa.ParseError(d) -> "parse: " <> d
+    ghsa.RateLimited(d) -> d
+  }
+}
+
+fn format_npm_audit_error(e: npm_audit.NpmAuditError) -> String {
+  case e {
+    npm_audit.NetworkError(d) -> d
+    npm_audit.ApiError(status, _) -> "HTTP " <> int.to_string(status)
+    npm_audit.ParseError(d) -> "parse: " <> d
   }
 }

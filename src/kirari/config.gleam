@@ -227,11 +227,13 @@ fn decode_security_section(doc: Dict(String, Toml)) -> SecurityConfig {
     [], deny -> types.LicenseDeny(deny)
     allow, _ -> types.LicenseAllow(allow)
   }
+  let audit_ignore = decode_string_array(doc, ["security", "audit-ignore"])
   SecurityConfig(
     exclude_newer: exclude_newer,
     npm_scripts: npm_scripts,
     provenance: provenance,
     license_policy: license_policy,
+    audit_ignore: audit_ignore,
   )
 }
 
@@ -381,6 +383,13 @@ fn encode_security_section(sec: SecurityConfig) -> String {
       ["license-deny = [" <> quoted <> "]", ..lines]
     }
     types.LicenseNoPolicy -> lines
+  }
+  let lines = case sec.audit_ignore {
+    [] -> lines
+    ids -> {
+      let quoted = list.map(ids, quote) |> string.join(", ")
+      ["audit-ignore = [" <> quoted <> "]", ..lines]
+    }
   }
   case lines {
     [] -> ""

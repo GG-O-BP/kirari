@@ -108,10 +108,18 @@ app_version() ->
         undefined -> {error, nil}
     end.
 
+%% 포트 옵션 — Windows에서 hide로 CMD 창 억제
+port_opts() ->
+    Base = [stream, exit_status, binary, stderr_to_stdout],
+    case os:type() of
+        {win32, _} -> [hide | Base];
+        _ -> Base
+    end.
+
 %% 셸 명령어 실행 — 종료 코드와 출력 반환
 run_command(Cmd) when is_binary(Cmd) ->
     CmdStr = binary_to_list(Cmd),
-    Port = open_port({spawn, CmdStr}, [stream, exit_status, binary, stderr_to_stdout]),
+    Port = open_port({spawn, CmdStr}, port_opts()),
     collect_port(Port, <<>>).
 
 collect_port(Port, Acc) ->
@@ -127,7 +135,7 @@ collect_port(Port, Acc) ->
 %% 셸 명령어 실행 — stdout/stderr를 실시간 스트리밍, 종료 코드 반환
 exec_command(Cmd) when is_binary(Cmd) ->
     CmdStr = binary_to_list(Cmd),
-    Port = open_port({spawn, CmdStr}, [stream, exit_status, binary, stderr_to_stdout]),
+    Port = open_port({spawn, CmdStr}, port_opts()),
     stream_port(Port).
 
 stream_port(Port) ->
