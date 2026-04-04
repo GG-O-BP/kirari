@@ -50,6 +50,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item scripts\kir.bat build\erlang-shipment\kir.bat
+          Copy-Item scripts\kir build\erlang-shipment\kir
           Copy-Item -Recurse build\erlang-shipment C:\kirari
           $env:Path = "C:\kirari;" + $env:Path
           [Environment]::SetEnvironmentVariable("Path", $env:Path, "Process")
@@ -91,6 +92,7 @@ jobs:
           kir.bat install
           kir.bat export erlang-shipment
           copy scripts\kir.bat build\erlang-shipment\kir.bat
+          copy scripts\kir build\erlang-shipment\kir
 
       # 5. 아카이브
       - name: Archive (Linux)
