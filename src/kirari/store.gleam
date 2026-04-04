@@ -2,6 +2,7 @@
 //// Hex와 npm 레지스트리별 전용 하위 모듈로 위임하는 라우터
 //// 타입 정의는 store/types.gleam에 위치 (순환 의존성 방지)
 
+import gleam/list
 import gleam/result
 import kirari/platform
 import kirari/store/hex as hex_store
@@ -77,5 +78,32 @@ pub fn store_package(
   case registry {
     Hex -> hex_store.store_package(data, expected_sha256, name, version)
     Npm -> npm_store.store_package(data, expected_sha256, name, version)
+  }
+}
+
+/// 레지스트리별 store 내 캐시된 패키지 수 반환
+pub fn count_entries(registry: Registry) -> Int {
+  case store_root() {
+    Ok(base) -> {
+      let path = case registry {
+        Hex -> base <> "/hex"
+        Npm -> base <> "/npm"
+      }
+      count_entries_in(path)
+    }
+    Error(_) -> 0
+  }
+}
+
+fn count_entries_in(path: String) -> Int {
+  case simplifile.read_directory(path) {
+    Ok(dirs) ->
+      list.fold(dirs, 0, fn(count, dir) {
+        case simplifile.read_directory(path <> "/" <> dir) {
+          Ok(entries) -> count + list.length(entries)
+          Error(_) -> count
+        }
+      })
+    Error(_) -> 0
   }
 }

@@ -6,6 +6,12 @@ import gleam/order.{type Order}
 import gleam/result
 import gleam/string
 
+/// semver 모듈 전용 에러 타입
+pub type SemverError {
+  InvalidVersion(detail: String)
+  InvalidConstraint(detail: String)
+}
+
 /// 파싱된 시맨틱 버전 (opaque — parse_version으로만 생성)
 pub opaque type Version {
   Version(major: Int, minor: Int, patch: Int, pre: String)
@@ -28,7 +34,7 @@ pub opaque type Constraint {
 // ---------------------------------------------------------------------------
 
 /// 버전 문자열 파싱: "1.2.3", "1.2.3-rc.1"
-pub fn parse_version(s: String) -> Result(Version, String) {
+pub fn parse_version(s: String) -> Result(Version, SemverError) {
   let s = string.trim(s)
   // v 접두사 제거
   let s = case string.starts_with(s, "v") {
@@ -50,37 +56,37 @@ pub fn parse_version(s: String) -> Result(Version, String) {
     [maj_s, min_s, pat_s] -> {
       use maj <- result.try(
         int.parse(maj_s)
-        |> result.replace_error("invalid major: " <> maj_s),
+        |> result.replace_error(InvalidVersion("invalid major: " <> maj_s)),
       )
       use min <- result.try(
         int.parse(min_s)
-        |> result.replace_error("invalid minor: " <> min_s),
+        |> result.replace_error(InvalidVersion("invalid minor: " <> min_s)),
       )
       use pat <- result.try(
         int.parse(pat_s)
-        |> result.replace_error("invalid patch: " <> pat_s),
+        |> result.replace_error(InvalidVersion("invalid patch: " <> pat_s)),
       )
       Ok(Version(major: maj, minor: min, patch: pat, pre: pre))
     }
     [maj_s, min_s] -> {
       use maj <- result.try(
         int.parse(maj_s)
-        |> result.replace_error("invalid major: " <> maj_s),
+        |> result.replace_error(InvalidVersion("invalid major: " <> maj_s)),
       )
       use min <- result.try(
         int.parse(min_s)
-        |> result.replace_error("invalid minor: " <> min_s),
+        |> result.replace_error(InvalidVersion("invalid minor: " <> min_s)),
       )
       Ok(Version(major: maj, minor: min, patch: 0, pre: pre))
     }
     [maj_s] -> {
       use maj <- result.try(
         int.parse(maj_s)
-        |> result.replace_error("invalid major: " <> maj_s),
+        |> result.replace_error(InvalidVersion("invalid major: " <> maj_s)),
       )
       Ok(Version(major: maj, minor: 0, patch: 0, pre: ""))
     }
-    _ -> Error("expected MAJOR.MINOR.PATCH, got: " <> s)
+    _ -> Error(InvalidVersion("expected MAJOR.MINOR.PATCH, got: " <> s))
   }
 }
 
@@ -169,7 +175,7 @@ pub fn minor(v: Version) -> Int {
 // ---------------------------------------------------------------------------
 
 /// Hex 스타일 제약 조건 파싱: ">= 0.44.0 and < 2.0.0"
-pub fn parse_hex_constraint(s: String) -> Result(Constraint, String) {
+pub fn parse_hex_constraint(s: String) -> Result(Constraint, SemverError) {
   let s = string.trim(s)
   case s {
     "" -> Ok(Any)
@@ -177,7 +183,7 @@ pub fn parse_hex_constraint(s: String) -> Result(Constraint, String) {
   }
 }
 
-fn parse_hex_or(s: String) -> Result(Constraint, String) {
+fn parse_hex_or(s: String) -> Result(Constraint, SemverError) {
   case string.split_once(s, " or ") {
     Ok(#(left, right)) -> {
       use l <- result.try(parse_hex_and(left))
@@ -188,7 +194,7 @@ fn parse_hex_or(s: String) -> Result(Constraint, String) {
   }
 }
 
-fn parse_hex_and(s: String) -> Result(Constraint, String) {
+fn parse_hex_and(s: String) -> Result(Constraint, SemverError) {
   case string.split_once(s, " and ") {
     Ok(#(left, right)) -> {
       use l <- result.try(parse_hex_leaf(string.trim(left)))
@@ -199,7 +205,7 @@ fn parse_hex_and(s: String) -> Result(Constraint, String) {
   }
 }
 
-fn parse_hex_leaf(s: String) -> Result(Constraint, String) {
+fn parse_hex_leaf(s: String) -> Result(Constraint, SemverError) {
   case s {
     ">= " <> rest -> {
       use v <- result.try(parse_version(rest))
@@ -248,7 +254,7 @@ fn parse_hex_leaf(s: String) -> Result(Constraint, String) {
 // ---------------------------------------------------------------------------
 
 /// npm 스타일 제약 조건 파싱: "^11.0.0", "~1.2.3", ">=1.0.0 <2.0.0"
-pub fn parse_npm_constraint(s: String) -> Result(Constraint, String) {
+pub fn parse_npm_constraint(s: String) -> Result(Constraint, SemverError) {
   let s = string.trim(s)
   case s {
     "" | "*" -> Ok(Any)
@@ -256,7 +262,7 @@ pub fn parse_npm_constraint(s: String) -> Result(Constraint, String) {
   }
 }
 
-fn parse_npm_or(s: String) -> Result(Constraint, String) {
+fn parse_npm_or(s: String) -> Result(Constraint, SemverError) {
   let parts = string.split(s, "||")
   case parts {
     [] -> Ok(Any)
@@ -269,7 +275,7 @@ fn parse_npm_or(s: String) -> Result(Constraint, String) {
   }
 }
 
-fn parse_npm_range(s: String) -> Result(Constraint, String) {
+fn parse_npm_range(s: String) -> Result(Constraint, SemverError) {
   // 공백으로 구분된 여러 비교를 AND로 결합
   let parts =
     string.split(s, " ")
@@ -277,7 +283,7 @@ fn parse_npm_range(s: String) -> Result(Constraint, String) {
   parse_npm_parts(parts)
 }
 
-fn parse_npm_parts(parts: List(String)) -> Result(Constraint, String) {
+fn parse_npm_parts(parts: List(String)) -> Result(Constraint, SemverError) {
   case parts {
     [] -> Ok(Any)
     [single] -> parse_npm_single(single)
@@ -289,7 +295,7 @@ fn parse_npm_parts(parts: List(String)) -> Result(Constraint, String) {
   }
 }
 
-fn parse_npm_single(s: String) -> Result(Constraint, String) {
+fn parse_npm_single(s: String) -> Result(Constraint, SemverError) {
   case s {
     "^" <> rest -> parse_npm_caret(rest)
     "~" <> rest -> parse_npm_tilde(rest)
@@ -323,7 +329,7 @@ fn parse_npm_single(s: String) -> Result(Constraint, String) {
 /// ^1.2.3 → >= 1.2.3 and < 2.0.0 (major 고정)
 /// ^0.2.3 → >= 0.2.3 and < 0.3.0 (minor 고정, major=0일 때)
 /// ^0.0.3 → >= 0.0.3 and < 0.0.4 (patch 고정, major=0,minor=0일 때)
-fn parse_npm_caret(s: String) -> Result(Constraint, String) {
+fn parse_npm_caret(s: String) -> Result(Constraint, SemverError) {
   use v <- result.try(parse_version(s))
   let upper = case v.major, v.minor {
     0, 0 -> Version(0, 0, v.patch + 1, "")
@@ -334,7 +340,7 @@ fn parse_npm_caret(s: String) -> Result(Constraint, String) {
 }
 
 /// ~1.2.3 → >= 1.2.3 and < 1.3.0 (minor 고정)
-fn parse_npm_tilde(s: String) -> Result(Constraint, String) {
+fn parse_npm_tilde(s: String) -> Result(Constraint, SemverError) {
   use v <- result.try(parse_version(s))
   let upper = Version(v.major, v.minor + 1, 0, "")
   Ok(And(Gte(Version(..v, pre: "")), Lt(upper)))
@@ -355,5 +361,114 @@ pub fn satisfies(version: Version, constraint: Constraint) -> Bool {
     Lte(v) -> compare(version, v) == order.Lt || compare(version, v) == order.Eq
     And(a, b) -> satisfies(version, a) && satisfies(version, b)
     Or(a, b) -> satisfies(version, a) || satisfies(version, b)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hex 제약 조건 정규화
+// ---------------------------------------------------------------------------
+
+/// 단축 버전을 Hex SemVer 형식으로 변환
+/// "3" → ">= 3.0.0 and < 4.0.0"
+/// "3.1" → ">= 3.1.0 and < 4.0.0"
+/// "3.1.0" → ">= 3.1.0 and < 4.0.0"
+/// "^3.0" → ">= 3.0.0 and < 4.0.0"
+/// "~3.1" → ">= 3.1.0 and < 3.2.0"
+/// ">= 1.0.0" 등 이미 Hex 형식이면 그대로
+pub fn normalize_hex_constraint(ver: String) -> String {
+  // 이미 Hex SemVer 형식 (>=, and, <)이면 그대로
+  case
+    string.contains(ver, ">=")
+    || string.contains(ver, "and")
+    || string.contains(ver, ">= 0.0.0")
+  {
+    True -> ver
+    False -> {
+      // ^ prefix 제거
+      let cleaned = case string.starts_with(ver, "^") {
+        True -> string.drop_start(ver, 1)
+        False -> ver
+      }
+      let is_tilde = string.starts_with(ver, "~")
+      let cleaned = case is_tilde {
+        True -> string.drop_start(cleaned, 1)
+        False -> cleaned
+      }
+      normalize_hex_parts(string.split(cleaned, "."), is_tilde, ver)
+    }
+  }
+}
+
+fn normalize_hex_parts(
+  parts: List(String),
+  is_tilde: Bool,
+  original: String,
+) -> String {
+  case parts {
+    [major_s] ->
+      case int.parse(major_s) {
+        Ok(major) ->
+          ">= "
+          <> int.to_string(major)
+          <> ".0.0 and < "
+          <> int.to_string(major + 1)
+          <> ".0.0"
+        Error(_) -> original
+      }
+    [major_s, minor_s] ->
+      case int.parse(major_s), int.parse(minor_s) {
+        Ok(major), Ok(minor) ->
+          case is_tilde {
+            True ->
+              ">= "
+              <> int.to_string(major)
+              <> "."
+              <> int.to_string(minor)
+              <> ".0 and < "
+              <> int.to_string(major)
+              <> "."
+              <> int.to_string(minor + 1)
+              <> ".0"
+            False ->
+              ">= "
+              <> int.to_string(major)
+              <> "."
+              <> int.to_string(minor)
+              <> ".0 and < "
+              <> int.to_string(major + 1)
+              <> ".0.0"
+          }
+        _, _ -> original
+      }
+    [major_s, minor_s, patch_s] ->
+      case int.parse(major_s), int.parse(minor_s), int.parse(patch_s) {
+        Ok(major), Ok(minor), Ok(patch) ->
+          case is_tilde {
+            True ->
+              ">= "
+              <> int.to_string(major)
+              <> "."
+              <> int.to_string(minor)
+              <> "."
+              <> int.to_string(patch)
+              <> " and < "
+              <> int.to_string(major)
+              <> "."
+              <> int.to_string(minor + 1)
+              <> ".0"
+            False ->
+              ">= "
+              <> int.to_string(major)
+              <> "."
+              <> int.to_string(minor)
+              <> "."
+              <> int.to_string(patch)
+              <> " and < "
+              <> int.to_string(major + 1)
+              <> ".0.0"
+          }
+        _, _, _ -> original
+      }
+    _ -> original
   }
 }

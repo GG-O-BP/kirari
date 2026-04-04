@@ -1,7 +1,6 @@
 //// 프로젝트 설치 — store에서 build/packages, node_modules로 링크/복사
 
 import filepath
-import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
@@ -17,6 +16,11 @@ pub type InstallerError {
   LinkError(detail: String)
 }
 
+/// installer 경고 타입
+pub type Warning {
+  PlatformMismatch(name: String, version: String, os: String, arch: String)
+}
+
 // ---------------------------------------------------------------------------
 // 공개 API
 // ---------------------------------------------------------------------------
@@ -25,33 +29,33 @@ pub type InstallerError {
 pub fn install_all(
   packages: List(ResolvedPackage),
   project_dir: String,
-) -> Result(Nil, InstallerError) {
+) -> Result(List(Warning), InstallerError) {
   use _ <- result.try(ensure_dirs(project_dir))
-  install_each(packages, project_dir)
+  install_each(packages, project_dir, [])
 }
 
 /// 단일 패키지 설치
 pub fn install_package(
   package: ResolvedPackage,
   project_dir: String,
-) -> Result(Nil, InstallerError) {
+) -> Result(List(Warning), InstallerError) {
   use source_path <- result.try(
     store.package_path(package.sha256, package.registry)
     |> result.map_error(StoreErr),
   )
-  // 플랫폼 불일치 경고 (npm만)
-  warn_platform_mismatch(package)
-  let target = install_target(package, project_dir)
+  let warnings = check_platform_mismatch(package)
+  let target = install_path(package, project_dir)
   // 기존 디렉토리 제거 후 복사
   let _ = simplifile.delete(target)
   use _ <- result.try(
     simplifile.create_directory_all(target)
     |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) }),
   )
-  case install_mode(package) {
+  use _ <- result.try(case install_mode(package) {
     HardlinkMode -> hardlink_dir_contents(source_path, target)
     CopyMode -> copy_dir_contents(source_path, target)
-  }
+  })
+  Ok(warnings)
 }
 
 /// npm 패키지의 bin 심볼릭 링크 생성
@@ -121,17 +125,19 @@ fn install_mode(package: ResolvedPackage) -> InstallMode {
 fn install_each(
   packages: List(ResolvedPackage),
   project_dir: String,
-) -> Result(Nil, InstallerError) {
+  acc: List(Warning),
+) -> Result(List(Warning), InstallerError) {
   case packages {
-    [] -> Ok(Nil)
+    [] -> Ok(acc)
     [pkg, ..rest] -> {
-      use _ <- result.try(install_package(pkg, project_dir))
-      install_each(rest, project_dir)
+      use warnings <- result.try(install_package(pkg, project_dir))
+      install_each(rest, project_dir, list.append(acc, warnings))
     }
   }
 }
 
-fn install_target(pkg: ResolvedPackage, project_dir: String) -> String {
+/// 패키지의 설치 경로 반환
+pub fn install_path(pkg: ResolvedPackage, project_dir: String) -> String {
   case pkg.registry {
     Hex -> project_dir <> "/build/packages/" <> pkg.name
     Npm -> project_dir <> "/node_modules/" <> pkg.name
@@ -261,7 +267,7 @@ fn create_cmd_wrapper(
   |> result.map_error(fn(e) { IoError(simplifile.describe_error(e)) })
 }
 
-fn warn_platform_mismatch(package: ResolvedPackage) -> Nil {
+fn check_platform_mismatch(package: ResolvedPackage) -> List(Warning) {
   case package.registry, package.platform {
     Npm, Ok(plat) -> {
       let current_os = platform.get_platform_os()
@@ -283,21 +289,18 @@ fn warn_platform_mismatch(package: ResolvedPackage) -> Nil {
           })
       }
       case os_ok && cpu_ok {
-        True -> Nil
-        False ->
-          io.println(
-            "\u{26a0} "
-            <> package.name
-            <> "@"
-            <> package.version
-            <> " may not be compatible with "
-            <> current_os
-            <> "/"
-            <> current_arch,
-          )
+        True -> []
+        False -> [
+          PlatformMismatch(
+            name: package.name,
+            version: package.version,
+            os: current_os,
+            arch: current_arch,
+          ),
+        ]
       }
     }
-    _, _ -> Nil
+    _, _ -> []
   }
 }
 

@@ -15,6 +15,7 @@ pub type SecurityError {
   HashMismatch(expected: String, actual: String)
   PathTraversal(path: String)
   InvalidTimestamp(value: String)
+  SignatureError(detail: String)
 }
 
 // ---------------------------------------------------------------------------
@@ -161,14 +162,15 @@ pub fn verify_npm_provenance(
   signatures: List(#(String, String)),
   keys: List(#(String, String)),
   policy: types.ProvenancePolicy,
-) -> Result(Nil, String) {
+) -> Result(Nil, SecurityError) {
   case policy {
     types.ProvenanceIgnore -> Ok(Nil)
     _ ->
       case signatures {
         [] ->
           case policy {
-            types.ProvenanceRequire -> Error("no signatures found")
+            types.ProvenanceRequire ->
+              Error(SignatureError("no signatures found"))
             _ -> Ok(Nil)
           }
         _ -> verify_any_signature(data, signatures, keys, policy)
@@ -181,7 +183,7 @@ fn verify_any_signature(
   signatures: List(#(String, String)),
   keys: List(#(String, String)),
   policy: types.ProvenancePolicy,
-) -> Result(Nil, String) {
+) -> Result(Nil, SecurityError) {
   let verified =
     list.any(signatures, fn(sig) {
       let #(keyid, sig_b64) = sig
@@ -198,7 +200,8 @@ fn verify_any_signature(
     True -> Ok(Nil)
     False ->
       case policy {
-        types.ProvenanceRequire -> Error("all signature verifications failed")
+        types.ProvenanceRequire ->
+          Error(SignatureError("all signature verifications failed"))
         _ -> Ok(Nil)
       }
   }

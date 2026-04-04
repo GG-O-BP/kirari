@@ -92,18 +92,22 @@ fn extract_bare_import(
 
 fn extract_from_specifier(line: String) -> Result(String, Nil) {
   // from "spec" | from 'spec' | import "spec"
-  let assert Ok(re) =
+  case
     regexp.from_string(
       "(?:from\\s+[\"']([^\"']+)[\"']|^import\\s+[\"']([^\"']+)[\"'])",
     )
-  case regexp.scan(re, line) {
-    [match, ..] ->
-      case match.submatches {
-        [option.Some(spec), ..] -> Ok(spec)
-        [option.None, option.Some(spec), ..] -> Ok(spec)
-        _ -> Error(Nil)
+  {
+    Error(_) -> Error(Nil)
+    Ok(re) ->
+      case regexp.scan(re, line) {
+        [match, ..] ->
+          case match.submatches {
+            [option.Some(spec), ..] -> Ok(spec)
+            [option.None, option.Some(spec), ..] -> Ok(spec)
+            _ -> Error(Nil)
+          }
+        [] -> Error(Nil)
       }
-    [] -> Error(Nil)
   }
 }
 

@@ -1,4 +1,5 @@
 //// Erlang FFI 래퍼 — Gleam에서 직접 호출할 수 없는 BEAM 기능
+//// 플랫폼 추상화 — Erlang FFI 바인딩 및 OS/시간 유틸리티
 
 /// gzip tar 아카이브를 dest 디렉토리에 압축 해제
 @external(erlang, "kirari_ffi", "extract_tar")
@@ -90,4 +91,50 @@ pub fn store_base_path() -> Result(String, String) {
   }
 }
 
+import gleam/int
 import gleam/result
+import gleam/string
+
+/// 현재 시각을 대략적 Unix seconds로 반환
+pub fn current_unix_seconds() -> Int {
+  parse_timestamp_to_seconds(get_current_timestamp()) |> result.unwrap(0)
+}
+
+/// RFC 3339 타임스탬프를 대략적 Unix seconds로 변환 (윤년 무시)
+pub fn parse_timestamp_to_seconds(ts: String) -> Result(Int, Nil) {
+  let cleaned =
+    string.replace(ts, "T", "-")
+    |> string.replace(":", "-")
+    |> string.replace("Z", "")
+  case string.split(cleaned, "-") {
+    [y_s, mo_s, d_s, h_s, mi_s, s_s] -> {
+      use y <- result.try(int.parse(y_s))
+      use mo <- result.try(int.parse(mo_s))
+      use d <- result.try(int.parse(d_s))
+      use h <- result.try(int.parse(h_s))
+      use mi <- result.try(int.parse(mi_s))
+      use s <- result.try(int.parse(s_s))
+      let days = { y - 1970 } * 365 + { y - 1969 } / 4 + month_days(mo) + d - 1
+      Ok(days * 86_400 + h * 3600 + mi * 60 + s)
+    }
+    _ -> Error(Nil)
+  }
+}
+
+fn month_days(month: Int) -> Int {
+  case month {
+    1 -> 0
+    2 -> 31
+    3 -> 59
+    4 -> 90
+    5 -> 120
+    6 -> 151
+    7 -> 181
+    8 -> 212
+    9 -> 243
+    10 -> 273
+    11 -> 304
+    12 -> 334
+    _ -> 0
+  }
+}

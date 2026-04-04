@@ -61,6 +61,7 @@ pub fn export(
 
 /// kir install/update/add/remove 후: packages.toml만 생성
 /// manifest.toml은 gleam이 직접 생성 (requirements 필드를 정확히 채우기 위해)
+/// config는 현재 미사용이나, manifest.toml 직접 생성 전환 시 필요
 pub fn write_build_metadata(
   _config: KirConfig,
   lock: KirLock,

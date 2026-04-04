@@ -1,50 +1,23 @@
 //// CLI 오케스트레이터 — glint 기반 명령어 등록 및 디스패치
 
-import gleam/dict
-import gleam/int
 import gleam/io
-import gleam/list
-import gleam/option
-import gleam/order
 import gleam/result
 import gleam/string
-import gleam_community/ansi
 import glint
+import kirari/cli/error
+import kirari/cli/install
+import kirari/cli/output
+import kirari/cli/query
 import kirari/config
-import kirari/export
-import kirari/ffi as ffi_detect
-import kirari/installer
-import kirari/lockfile
-import kirari/migrate
-import kirari/pipeline
 import kirari/platform
-import kirari/registry/hex as hex_registry
-import kirari/registry/npm as npm_registry
-import kirari/resolver
-import kirari/semver
-import kirari/store
-import kirari/store/gc
-import kirari/tree
-import kirari/types.{
-  type Dependency, type KirConfig, Dependency, Hex, KirConfig, Npm,
-}
-import simplifile
-
-/// 최상위 에러 타입 — 모든 모듈 에러를 래핑
-pub type KirError {
-  ConfigErr(config.ConfigError)
-  MigrateErr(migrate.MigrateError)
-  LockErr(lockfile.LockfileError)
-  ResolveErr(resolver.ResolverError)
-  PipelineErr(pipeline.PipelineError)
-  ExportErr(export.ExportError)
-  FfiErr(ffi_detect.FfiError)
-  UserError(detail: String)
-}
 
 // ---------------------------------------------------------------------------
 // 공개 API
 // ---------------------------------------------------------------------------
+
+/// 최상위 에러 타입 re-export
+pub type KirError =
+  error.KirError
 
 /// CLI 실행
 pub fn run(args: List(String)) -> Result(Nil, KirError) {
@@ -60,6 +33,15 @@ pub fn run(args: List(String)) -> Result(Nil, KirError) {
     _ -> run_glint(args)
   }
 }
+
+/// 에러를 사람이 읽을 수 있는 형태로 출력
+pub fn print_error(err: KirError) -> Nil {
+  output.print_error(err)
+}
+
+// ---------------------------------------------------------------------------
+// 명령어 등록
+// ---------------------------------------------------------------------------
 
 fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   glint.new()
@@ -173,79 +155,357 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   Ok(Nil)
 }
 
-/// 에러를 사람이 읽을 수 있는 형태로 출력
-pub fn print_error(error: KirError) -> Nil {
-  io.println_error(color_bold_red("error:") <> " " <> format_error(error))
-}
-
-fn format_error(error: KirError) -> String {
-  case error {
-    ConfigErr(e) ->
-      case e {
-        config.FileNotFound(p) -> "file not found: " <> p
-        config.ParseError(d) -> "parse error: " <> d
-        config.InvalidField(f, d) -> "invalid field " <> f <> ": " <> d
-        config.WriteError(p, d) -> "write error " <> p <> ": " <> d
-      }
-    MigrateErr(e) ->
-      case e {
-        migrate.FileNotFound(p) -> "file not found: " <> p
-        migrate.ParseError(d) -> "parse error: " <> d
-        migrate.InvalidField(f, d) -> "invalid field " <> f <> ": " <> d
-      }
-    LockErr(e) ->
-      case e {
-        lockfile.FileNotFound(p) -> "lockfile not found: " <> p
-        lockfile.ParseError(d) -> "lockfile parse error: " <> d
-        lockfile.FrozenMismatch(d) -> "frozen lockfile mismatch: " <> d
-        lockfile.WriteError(p, d) -> "lockfile write error " <> p <> ": " <> d
-      }
-    ResolveErr(e) ->
-      case e {
-        resolver.IncompatibleVersions(pkg, cs) ->
-          "no compatible version for "
-          <> pkg
-          <> " (constraints: "
-          <> string.join(cs, ", ")
-          <> ")"
-        resolver.PackageNotFound(name, reg) ->
-          "package not found: "
-          <> name
-          <> " ("
-          <> types.registry_to_string(reg)
-          <> ")"
-        resolver.RegistryError(d) -> "registry error: " <> d
-        resolver.CyclicDependency(c) ->
-          "cyclic dependency: " <> string.join(c, " → ")
-      }
-    PipelineErr(e) ->
-      case e {
-        pipeline.DownloadError(name, ver, d) ->
-          "download failed: " <> name <> "@" <> ver <> " — " <> d
-        pipeline.StoreErr(se) -> "store error: " <> string.inspect(se)
-        pipeline.InstallErr(ie) -> "install error: " <> string.inspect(ie)
-        pipeline.ProvenanceErr(name, detail) ->
-          "provenance verification failed: " <> name <> " — " <> detail
-      }
-    ExportErr(e) ->
-      case e {
-        export.WriteError(p, d) -> "export write error " <> p <> ": " <> d
-      }
-    FfiErr(e) ->
-      case e {
-        ffi_detect.IoError(d) -> "ffi detection error: " <> d
-      }
-    UserError(d) -> d
-  }
-}
-
 // ---------------------------------------------------------------------------
-// 명령어 구현
+// 명령어 정의
 // ---------------------------------------------------------------------------
 
 fn root_cmd() -> glint.Command(Nil) {
   glint.command(fn(_named, _args, _flags) { print_help() })
 }
+
+fn init_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Add kirari sections to gleam.toml")
+  glint.command(fn(_named, _args, _flags) {
+    case install.do_init(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn install_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help(
+    "Resolve and install dependencies, generate kir.lock",
+  )
+  use frozen_flag <- glint.flag(
+    glint.bool_flag("frozen")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Verify lockfile matches without installing"),
+  )
+  use exclude_newer_flag <- glint.flag(
+    glint.string_flag("exclude-newer")
+    |> glint.flag_default("")
+    |> glint.flag_help("Exclude versions published after timestamp (RFC 3339)"),
+  )
+  use offline_flag <- glint.flag(
+    glint.bool_flag("offline")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Use only cached packages, skip registry"),
+  )
+  use quiet_flag <- glint.flag(
+    glint.bool_flag("quiet")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Suppress output (CI mode)"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let frozen = frozen_flag(flags) |> result.unwrap(False)
+    let exclude_newer = exclude_newer_flag(flags) |> result.unwrap("")
+    let offline = offline_flag(flags) |> result.unwrap(False)
+    let quiet = quiet_flag(flags) |> result.unwrap(False)
+    let install_result = case offline, quiet {
+      True, _ -> install.do_install_offline(".")
+      _, True -> install.do_install_quiet(".")
+      _, _ -> install.do_install(".", frozen, exclude_newer)
+    }
+    case install_result {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn add_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Add a dependency (auto-detects Hex or npm)")
+  use npm_flag <- glint.flag(
+    glint.bool_flag("npm")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Force npm registry"),
+  )
+  use dev_flag <- glint.flag(
+    glint.bool_flag("dev")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Add as dev dependency"),
+  )
+  glint.command(fn(_named, args, flags) {
+    let is_npm = npm_flag(flags) |> result.unwrap(False)
+    let is_dev = dev_flag(flags) |> result.unwrap(False)
+    case args {
+      [raw_name, ..] -> {
+        let #(name, version) = install.parse_add_arg(raw_name, is_npm)
+        case install.do_add(".", name, version, is_npm, is_dev) {
+          Ok(_) -> Nil
+          Error(e) -> output.print_error(e)
+        }
+      }
+      _ -> io.println("Usage: kir add <package[@version]> [--npm] [--dev]")
+    }
+  })
+}
+
+fn remove_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Remove a dependency")
+  use npm_flag <- glint.flag(
+    glint.bool_flag("npm")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Force npm registry"),
+  )
+  glint.command(fn(_named, args, flags) {
+    let is_npm = npm_flag(flags) |> result.unwrap(False)
+    case args {
+      [name, ..] ->
+        case install.do_remove(".", name, is_npm) {
+          Ok(_) -> Nil
+          Error(e) -> output.print_error(e)
+        }
+      _ -> io.println("Usage: kir remove <package> [--npm]")
+    }
+  })
+}
+
+fn update_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Update dependencies (all or specific packages)")
+  glint.command(fn(_named, args, _flags) {
+    let result = case args {
+      [] -> install.do_update(".")
+      packages -> install.do_update_selective(".", packages)
+    }
+    case result {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn deps_list_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("List all dependencies")
+  glint.command(fn(_named, _args, _flags) {
+    case install.do_deps_list(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn deps_download_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Download dependencies without installing")
+  glint.command(fn(_named, _args, _flags) {
+    case install.do_deps_download(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn tree_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Print the unified dependency tree")
+  glint.command(fn(_named, _args, _flags) {
+    case install.do_tree(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn export_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Export manifest.toml + package.json")
+  glint.command(fn(_named, _args, _flags) {
+    case install.do_export(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn clean_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Remove build artifacts and store cache")
+  use store_flag <- glint.flag(
+    glint.bool_flag("store")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Also garbage-collect the global package store"),
+  )
+  use keep_cache_flag <- glint.flag(
+    glint.bool_flag("keep-cache")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Keep Gleam compilation cache (_gleam_artefacts)"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let clean_store = store_flag(flags) |> result.unwrap(False)
+    let keep_cache = keep_cache_flag(flags) |> result.unwrap(False)
+    install.do_clean(".", clean_store, keep_cache)
+  })
+}
+
+fn publish_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Publish package to Hex")
+  use replace_flag <- glint.flag(
+    glint.bool_flag("replace")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Replace existing version on Hex"),
+  )
+  use yes_flag <- glint.flag(
+    glint.bool_flag("yes")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Skip confirmation prompt"),
+  )
+  use dry_run_flag <- glint.flag(
+    glint.bool_flag("dry-run")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Simulate publish without uploading"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let replace = replace_flag(flags) |> result.unwrap(False)
+    let yes = yes_flag(flags) |> result.unwrap(False)
+    let dry_run = dry_run_flag(flags) |> result.unwrap(False)
+    install.do_publish(".", replace, yes, dry_run)
+  })
+}
+
+fn hex_retire_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Retire a Hex release")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [package, version, reason, ..rest] -> {
+        let message = case rest {
+          [msg, ..] -> " " <> msg
+          [] -> ""
+        }
+        output.run_gleam_cmd(
+          "gleam hex retire "
+          <> package
+          <> " "
+          <> version
+          <> " "
+          <> reason
+          <> message,
+        )
+      }
+      _ ->
+        io.println(
+          "Usage: kir hex retire <package> <version> <reason> [message]",
+        )
+    }
+  })
+}
+
+fn hex_unretire_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Un-retire a Hex release")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [package, version] ->
+        output.run_gleam_cmd("gleam hex unretire " <> package <> " " <> version)
+      _ -> io.println("Usage: kir hex unretire <package> <version>")
+    }
+  })
+}
+
+fn build_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Build the project", "gleam build")
+}
+
+fn run_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Run the project")
+  glint.command(fn(_named, args, _flags) {
+    let _ = config.normalize_gleam_toml(".")
+    let _ = install.do_install_quiet(".")
+    let cmd = case args {
+      [] -> "gleam run"
+      extra -> "gleam run -- " <> string.join(extra, " ")
+    }
+    output.run_gleam_cmd(cmd)
+  })
+}
+
+fn test_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Run the tests", "gleam test")
+}
+
+fn check_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Type check the project", "gleam check")
+}
+
+fn dev_cmd() -> glint.Command(Nil) {
+  install_then_gleam_cmd("Run the dev entrypoint", "gleam dev")
+}
+
+fn install_then_gleam_cmd(help: String, cmd: String) -> glint.Command(Nil) {
+  use <- glint.command_help(help)
+  glint.command(fn(_named, _args, _flags) {
+    let _ = config.normalize_gleam_toml(".")
+    let _ = install.do_install_quiet(".")
+    output.run_gleam_cmd(cmd)
+  })
+}
+
+fn gleam_passthrough_cmd(help: String, cmd: String) -> glint.Command(Nil) {
+  use <- glint.command_help(help)
+  glint.command(fn(_named, _args, _flags) {
+    let _ = config.normalize_gleam_toml(".")
+    output.run_gleam_cmd(cmd)
+  })
+}
+
+fn outdated_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("List outdated dependencies")
+  glint.command(fn(_named, _args, _flags) {
+    case query.do_outdated(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn why_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Explain why a package is installed")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [name, ..] ->
+        case query.do_why(".", name) {
+          Ok(_) -> Nil
+          Error(e) -> output.print_error(e)
+        }
+      _ -> io.println("Usage: kir why <package>")
+    }
+  })
+}
+
+fn diff_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Show lock changes (update preview)")
+  glint.command(fn(_named, _args, _flags) {
+    case query.do_diff(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn ls_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("List installed packages with paths")
+  glint.command(fn(_named, _args, _flags) {
+    case query.do_ls(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn doctor_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Diagnose environment")
+  glint.command(fn(_named, _args, _flags) { query.do_doctor(".") })
+}
+
+fn store_verify_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Verify cached package integrity")
+  glint.command(fn(_named, _args, _flags) {
+    case query.do_store_verify(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 헬퍼
+// ---------------------------------------------------------------------------
 
 fn print_help() -> Nil {
   io.println("kir — unified package manager for Gleam")
@@ -294,1543 +554,6 @@ fn print_help() -> Nil {
   io.println("  --version, -v  Print version")
 }
 
-fn init_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Add kirari sections to gleam.toml")
-  glint.command(fn(_named, _args, _flags) {
-    case do_init(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn install_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help(
-    "Resolve and install dependencies, generate kir.lock",
-  )
-  use frozen_flag <- glint.flag(
-    glint.bool_flag("frozen")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Verify lockfile matches without installing"),
-  )
-  use exclude_newer_flag <- glint.flag(
-    glint.string_flag("exclude-newer")
-    |> glint.flag_default("")
-    |> glint.flag_help("Exclude versions published after timestamp (RFC 3339)"),
-  )
-  use offline_flag <- glint.flag(
-    glint.bool_flag("offline")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Use only cached packages, skip registry"),
-  )
-  use quiet_flag <- glint.flag(
-    glint.bool_flag("quiet")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Suppress output (CI mode)"),
-  )
-  glint.command(fn(_named, _args, flags) {
-    let frozen = frozen_flag(flags) |> result.unwrap(False)
-    let exclude_newer = exclude_newer_flag(flags) |> result.unwrap("")
-    let offline = offline_flag(flags) |> result.unwrap(False)
-    let quiet = quiet_flag(flags) |> result.unwrap(False)
-    let install_result = case offline, quiet {
-      True, _ -> do_install_offline(".")
-      _, True -> do_install_quiet(".")
-      _, _ -> do_install(".", frozen, exclude_newer)
-    }
-    case install_result {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn add_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Add a dependency (auto-detects Hex or npm)")
-  use npm_flag <- glint.flag(
-    glint.bool_flag("npm")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Force npm registry"),
-  )
-  use dev_flag <- glint.flag(
-    glint.bool_flag("dev")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Add as dev dependency"),
-  )
-  glint.command(fn(_named, args, flags) {
-    let is_npm = npm_flag(flags) |> result.unwrap(False)
-    let is_dev = dev_flag(flags) |> result.unwrap(False)
-    case args {
-      [raw_name, ..] -> {
-        let #(name, version) = parse_add_arg(raw_name, is_npm)
-        case do_add(".", name, version, is_npm, is_dev) {
-          Ok(_) -> Nil
-          Error(e) -> print_error(e)
-        }
-      }
-      _ -> io.println("Usage: kir add <package[@version]> [--npm] [--dev]")
-    }
-  })
-}
-
-fn remove_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Remove a dependency")
-  use npm_flag <- glint.flag(
-    glint.bool_flag("npm")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Force npm registry"),
-  )
-  glint.command(fn(_named, args, flags) {
-    let is_npm = npm_flag(flags) |> result.unwrap(False)
-    case args {
-      [name, ..] ->
-        case do_remove(".", name, is_npm) {
-          Ok(_) -> Nil
-          Error(e) -> print_error(e)
-        }
-      _ -> io.println("Usage: kir remove <package> [--npm]")
-    }
-  })
-}
-
-fn update_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Update dependencies (all or specific packages)")
-  glint.command(fn(_named, args, _flags) {
-    let result = case args {
-      [] -> do_update(".")
-      packages -> do_update_selective(".", packages)
-    }
-    case result {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn deps_list_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("List all dependencies")
-  glint.command(fn(_named, _args, _flags) {
-    case do_deps_list(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn deps_download_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Download dependencies without installing")
-  glint.command(fn(_named, _args, _flags) {
-    case do_deps_download(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn build_cmd() -> glint.Command(Nil) {
-  install_then_gleam_cmd("Build the project", "gleam build")
-}
-
-fn run_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Run the project")
-  glint.command(fn(_named, args, _flags) {
-    let _ = config.normalize_gleam_toml(".")
-    let _ = do_install_quiet(".")
-    let cmd = case args {
-      [] -> "gleam run"
-      extra -> "gleam run -- " <> string.join(extra, " ")
-    }
-    run_gleam_cmd(cmd)
-  })
-}
-
-fn test_cmd() -> glint.Command(Nil) {
-  install_then_gleam_cmd("Run the tests", "gleam test")
-}
-
-fn check_cmd() -> glint.Command(Nil) {
-  install_then_gleam_cmd("Type check the project", "gleam check")
-}
-
-fn dev_cmd() -> glint.Command(Nil) {
-  install_then_gleam_cmd("Run the dev entrypoint", "gleam dev")
-}
-
-/// install(store → hardlink) 후 gleam 명령어 실행
-fn install_then_gleam_cmd(help: String, cmd: String) -> glint.Command(Nil) {
-  use <- glint.command_help(help)
-  glint.command(fn(_named, _args, _flags) {
-    let _ = config.normalize_gleam_toml(".")
-    let _ = do_install_quiet(".")
-    run_gleam_cmd(cmd)
-  })
-}
-
-fn clean_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Remove build artifacts and store cache")
-  use store_flag <- glint.flag(
-    glint.bool_flag("store")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Also garbage-collect the global package store"),
-  )
-  use keep_cache_flag <- glint.flag(
-    glint.bool_flag("keep-cache")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Keep Gleam compilation cache (_gleam_artefacts)"),
-  )
-  glint.command(fn(_named, _args, flags) {
-    let clean_store = store_flag(flags) |> result.unwrap(False)
-    let keep_cache = keep_cache_flag(flags) |> result.unwrap(False)
-    do_clean(".", clean_store, keep_cache)
-  })
-}
-
-fn publish_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Publish package to Hex")
-  use replace_flag <- glint.flag(
-    glint.bool_flag("replace")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Replace existing version on Hex"),
-  )
-  use yes_flag <- glint.flag(
-    glint.bool_flag("yes")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Skip confirmation prompt"),
-  )
-  use dry_run_flag <- glint.flag(
-    glint.bool_flag("dry-run")
-    |> glint.flag_default(False)
-    |> glint.flag_help("Simulate publish without uploading"),
-  )
-  glint.command(fn(_named, _args, flags) {
-    let replace = replace_flag(flags) |> result.unwrap(False)
-    let yes = yes_flag(flags) |> result.unwrap(False)
-    let dry_run = dry_run_flag(flags) |> result.unwrap(False)
-    do_publish(".", replace, yes, dry_run)
-  })
-}
-
-fn hex_retire_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Retire a Hex release")
-  glint.command(fn(_named, args, _flags) {
-    case args {
-      [package, version, reason, ..rest] -> {
-        let message = case rest {
-          [msg, ..] -> " " <> msg
-          [] -> ""
-        }
-        run_gleam_cmd(
-          "gleam hex retire "
-          <> package
-          <> " "
-          <> version
-          <> " "
-          <> reason
-          <> message,
-        )
-      }
-      _ ->
-        io.println(
-          "Usage: kir hex retire <package> <version> <reason> [message]",
-        )
-    }
-  })
-}
-
-fn hex_unretire_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Un-retire a Hex release")
-  glint.command(fn(_named, args, _flags) {
-    case args {
-      [package, version] ->
-        run_gleam_cmd("gleam hex unretire " <> package <> " " <> version)
-      _ -> io.println("Usage: kir hex unretire <package> <version>")
-    }
-  })
-}
-
-fn gleam_passthrough_cmd(help: String, cmd: String) -> glint.Command(Nil) {
-  use <- glint.command_help(help)
-  glint.command(fn(_named, _args, _flags) {
-    let _ = config.normalize_gleam_toml(".")
-    run_gleam_cmd(cmd)
-  })
-}
-
-fn tree_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Print the unified dependency tree")
-  glint.command(fn(_named, _args, _flags) {
-    case do_tree(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn export_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Export manifest.toml + package.json")
-  glint.command(fn(_named, _args, _flags) {
-    case do_export(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-// ---------------------------------------------------------------------------
-// 명령어 로직
-// ---------------------------------------------------------------------------
-
-fn do_init(dir: String) -> Result(Nil, KirError) {
-  io.println("Initializing kirari...")
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  // package.json이 있으면 npm 의존성을 [npm-dependencies]에 병합
-  let npm_deps = case migrate.read_package_json(dir) {
-    Ok(deps) -> deps
-    Error(_) -> []
-  }
-  let merged = merge_npm_deps(cfg, npm_deps)
-  use _ <- result.try(
-    config.write_config(merged, dir)
-    |> result.map_error(ConfigErr),
-  )
-  io.println(color_green("Initialized") <> " gleam.toml with kirari sections")
-  Ok(Nil)
-}
-
-fn do_install(
-  dir: String,
-  frozen: Bool,
-  exclude_newer: String,
-) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  // --exclude-newer 플래그로 오버라이드
-  let cfg = case exclude_newer {
-    "" -> cfg
-    ts ->
-      types.KirConfig(
-        ..cfg,
-        security: types.SecurityConfig(..cfg.security, exclude_newer: Ok(ts)),
-      )
-  }
-  warn_duplicate_deps(cfg)
-  let existing_lock =
-    lockfile.read(dir)
-    |> result.map_error(fn(_) { Nil })
-  io.println("Resolving dependencies...")
-  use resolve_result <- result.try(
-    resolver.resolve_full(cfg, existing_lock)
-    |> result.map_error(ResolveErr),
-  )
-  io.println(
-    color_green("Resolved")
-    <> " "
-    <> int.to_string(list.length(resolve_result.packages))
-    <> " packages",
-  )
-  // --frozen: lockfile 일치 검증만 수행
-  case frozen {
-    True -> {
-      use lock <- result.try(
-        lockfile.read(dir)
-        |> result.map_error(LockErr),
-      )
-      use _ <- result.try(
-        lockfile.verify_frozen(lock, resolve_result.packages)
-        |> result.map_error(LockErr),
-      )
-      io.println(color_green("Verified") <> " lockfile matches (--frozen)")
-      Ok(Nil)
-    }
-    False -> {
-      // 다운로드 → 저장 → 설치
-      io.println("Downloading and installing...")
-      use pipeline_result <- result.try(
-        pipeline.run(resolve_result, dir, cfg.security)
-        |> result.map_error(PipelineErr),
-      )
-      let installed = pipeline_result.packages
-      // lockfile 기록 (실제 sha256 포함)
-      let lock = lockfile.from_packages(installed)
-      use _ <- result.try(
-        lockfile.write(lock, dir)
-        |> result.map_error(LockErr),
-      )
-      io.println(
-        color_green("Installed")
-        <> " "
-        <> int.to_string(list.length(installed))
-        <> " packages, wrote kir.lock",
-      )
-      // gleam build 호환: gleam.toml + manifest.toml 자동 생성
-      let _ = export.write_build_metadata(cfg, lock, dir)
-      // FFI 감지: 미선언 npm import 경고
-      warn_undeclared_npm(dir, cfg)
-      Ok(Nil)
-    }
-  }
-}
-
-/// install과 동일하되 출력 없이 수행 (kir build/run/test/check/dev 용)
-fn do_install_quiet(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  let existing_lock =
-    lockfile.read(dir)
-    |> result.map_error(fn(_) { Nil })
-  use resolve_result <- result.try(
-    resolver.resolve_full(cfg, existing_lock)
-    |> result.map_error(ResolveErr),
-  )
-  use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security)
-    |> result.map_error(PipelineErr),
-  )
-  let lock = lockfile.from_packages(pipeline_result.packages)
-  use _ <- result.try(
-    lockfile.write(lock, dir)
-    |> result.map_error(LockErr),
-  )
-  let _ = export.write_build_metadata(cfg, lock, dir)
-  Ok(Nil)
-}
-
-fn do_update(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  io.println("Updating all dependencies...")
-  // lock 무시 — Error(Nil) 전달하여 전부 재해결
-  use resolve_result <- result.try(
-    resolver.resolve_full(cfg, Error(Nil))
-    |> result.map_error(ResolveErr),
-  )
-  io.println(
-    color_green("Resolved")
-    <> " "
-    <> int.to_string(list.length(resolve_result.packages))
-    <> " packages",
-  )
-  io.println("Downloading and installing...")
-  use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security)
-    |> result.map_error(PipelineErr),
-  )
-  let installed = pipeline_result.packages
-  let lock = lockfile.from_packages(installed)
-  use _ <- result.try(
-    lockfile.write(lock, dir)
-    |> result.map_error(LockErr),
-  )
-  io.println(
-    color_green("Updated")
-    <> " "
-    <> int.to_string(list.length(installed))
-    <> " packages, wrote kir.lock",
-  )
-  let _ = export.write_build_metadata(cfg, lock, dir)
-  Ok(Nil)
-}
-
-/// pkg@version 형식 파싱 (scoped npm 패키지 @scope/pkg@ver 처리)
-fn parse_add_arg(raw: String, is_npm: Bool) -> #(String, String) {
-  let is_scoped_npm = is_npm || string.starts_with(raw, "@")
-  let default_version = case is_scoped_npm {
-    True -> "*"
-    False -> ">= 0.0.0"
-  }
-  let #(name, ver) = case is_scoped_npm {
-    True -> {
-      let without_prefix = string.drop_start(raw, 1)
-      case string.split(without_prefix, "@") {
-        [scope_and_name] -> #("@" <> scope_and_name, default_version)
-        [scope_and_name, ver] -> #("@" <> scope_and_name, ver)
-        _ -> #(raw, default_version)
-      }
-    }
-    False ->
-      case string.split(raw, "@") {
-        [n] -> #(n, default_version)
-        [n, v] -> #(n, v)
-        _ -> #(raw, default_version)
-      }
-  }
-  // Hex: 단축 버전 → Hex SemVer 변환
-  case is_scoped_npm {
-    True -> #(name, ver)
-    False -> #(name, normalize_hex_version(ver))
-  }
-}
-
-/// 단축 버전을 Hex SemVer 형식으로 변환
-/// "3" → ">= 3.0.0 and < 4.0.0"
-/// "3.1" → ">= 3.1.0 and < 4.0.0"
-/// "3.1.0" → ">= 3.1.0 and < 4.0.0"
-/// "^3.0" → ">= 3.0.0 and < 4.0.0"
-/// "~3.1" → ">= 3.1.0 and < 3.2.0"
-/// ">= 1.0.0" 등 이미 Hex 형식이면 그대로
-fn normalize_hex_version(ver: String) -> String {
-  // 이미 Hex SemVer 형식 (>=, and, <)이면 그대로
-  case
-    string.contains(ver, ">=")
-    || string.contains(ver, "and")
-    || string.contains(ver, ">= 0.0.0")
-  {
-    True -> ver
-    False -> {
-      // ^ prefix 제거
-      let cleaned = case string.starts_with(ver, "^") {
-        True -> string.drop_start(ver, 1)
-        False -> ver
-      }
-      let is_tilde = string.starts_with(ver, "~")
-      let cleaned = case is_tilde {
-        True -> string.drop_start(cleaned, 1)
-        False -> cleaned
-      }
-      // 버전 파싱
-      let parts = string.split(cleaned, ".")
-      case parts {
-        [major_s] ->
-          case int.parse(major_s) {
-            Ok(major) ->
-              ">= "
-              <> int.to_string(major)
-              <> ".0.0 and < "
-              <> int.to_string(major + 1)
-              <> ".0.0"
-            Error(_) -> ver
-          }
-        [major_s, minor_s] ->
-          case int.parse(major_s), int.parse(minor_s) {
-            Ok(major), Ok(minor) ->
-              case is_tilde {
-                True ->
-                  ">= "
-                  <> int.to_string(major)
-                  <> "."
-                  <> int.to_string(minor)
-                  <> ".0 and < "
-                  <> int.to_string(major)
-                  <> "."
-                  <> int.to_string(minor + 1)
-                  <> ".0"
-                False ->
-                  ">= "
-                  <> int.to_string(major)
-                  <> "."
-                  <> int.to_string(minor)
-                  <> ".0 and < "
-                  <> int.to_string(major + 1)
-                  <> ".0.0"
-              }
-            _, _ -> ver
-          }
-        [major_s, minor_s, patch_s] ->
-          case int.parse(major_s), int.parse(minor_s), int.parse(patch_s) {
-            Ok(major), Ok(minor), Ok(patch) ->
-              case is_tilde {
-                True ->
-                  ">= "
-                  <> int.to_string(major)
-                  <> "."
-                  <> int.to_string(minor)
-                  <> "."
-                  <> int.to_string(patch)
-                  <> " and < "
-                  <> int.to_string(major)
-                  <> "."
-                  <> int.to_string(minor + 1)
-                  <> ".0"
-                False ->
-                  ">= "
-                  <> int.to_string(major)
-                  <> "."
-                  <> int.to_string(minor)
-                  <> "."
-                  <> int.to_string(patch)
-                  <> " and < "
-                  <> int.to_string(major + 1)
-                  <> ".0.0"
-              }
-            _, _, _ -> ver
-          }
-        _ -> ver
-      }
-    }
-  }
-}
-
-fn do_add(
-  dir: String,
-  name: String,
-  version_constraint: String,
-  is_npm: Bool,
-  is_dev: Bool,
-) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  let registry = case is_npm {
-    True -> Npm
-    False -> detect_registry(name)
-  }
-  let dep =
-    Dependency(
-      name: name,
-      version_constraint: version_constraint,
-      registry: registry,
-      dev: is_dev,
-    )
-  let updated = config.add_dependency(cfg, dep)
-  use _ <- result.try(
-    config.write_config(updated, dir)
-    |> result.map_error(ConfigErr),
-  )
-  io.println(
-    color_green("Added")
-    <> " "
-    <> name
-    <> " to ["
-    <> types.registry_to_string(registry)
-    <> case is_dev {
-      True -> ".dev"
-      False -> ""
-    }
-    <> "]",
-  )
-  do_install(dir, False, "")
-}
-
-fn do_remove(dir: String, name: String, is_npm: Bool) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  let registry = case is_npm {
-    True -> Npm
-    False -> detect_registry(name)
-  }
-  let updated = config.remove_dependency(cfg, name, registry)
-  use _ <- result.try(
-    config.write_config(updated, dir)
-    |> result.map_error(ConfigErr),
-  )
-  io.println(
-    color_red("Removed")
-    <> " "
-    <> name
-    <> " from ["
-    <> types.registry_to_string(registry)
-    <> "]",
-  )
-  do_install(dir, False, "")
-}
-
-fn do_tree(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  use lock <- result.try(
-    lockfile.read(dir)
-    |> result.map_error(LockErr),
-  )
-  let version_infos = case resolver.resolve_full(cfg, Ok(lock)) {
-    Ok(resolve_result) -> resolve_result.version_infos
-    Error(_) -> dict.new()
-  }
-  let roots = tree.build(cfg, lock, version_infos)
-  let output = tree.render(roots)
-  case output {
-    "" -> io.println("(no dependencies)")
-    _ -> io.println(output)
-  }
-  Ok(Nil)
-}
-
-fn do_export(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  let lock =
-    lockfile.read(dir)
-    |> result.map_error(fn(_) { Nil })
-  // resolver 실행하여 version_infos 얻기 (manifest.toml requirements용)
-  let version_infos = case resolver.resolve_full(cfg, lock) {
-    Ok(resolve_result) -> Ok(resolve_result.version_infos)
-    Error(_) -> Error(Nil)
-  }
-  use paths <- result.try(
-    export.export(cfg, lock, version_infos, dir)
-    |> result.map_error(ExportErr),
-  )
-  list.each(paths, fn(p) { io.println("Wrote " <> p) })
-  Ok(Nil)
-}
-
-fn do_deps_list(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  let all_deps =
-    list.flatten([
-      cfg.hex_deps,
-      cfg.hex_dev_deps,
-      cfg.npm_deps,
-      cfg.npm_dev_deps,
-    ])
-    |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
-  case all_deps {
-    [] -> io.println("(no dependencies)")
-    _ ->
-      list.each(all_deps, fn(d) {
-        io.println(
-          d.name
-          <> " "
-          <> color_dim(d.version_constraint)
-          <> " ("
-          <> types.registry_to_string(d.registry)
-          <> case d.dev {
-            True -> ", dev"
-            False -> ""
-          }
-          <> ")",
-        )
-      })
-  }
-  Ok(Nil)
-}
-
-fn do_deps_download(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  let existing_lock =
-    lockfile.read(dir)
-    |> result.map_error(fn(_) { Nil })
-  io.println("Resolving dependencies...")
-  use resolve_result <- result.try(
-    resolver.resolve_full(cfg, existing_lock)
-    |> result.map_error(ResolveErr),
-  )
-  io.println("Downloading...")
-  use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security)
-    |> result.map_error(PipelineErr),
-  )
-  let lock = lockfile.from_packages(pipeline_result.packages)
-  use _ <- result.try(
-    lockfile.write(lock, dir)
-    |> result.map_error(LockErr),
-  )
-  io.println(
-    color_green("Downloaded")
-    <> " "
-    <> int.to_string(list.length(pipeline_result.packages))
-    <> " packages",
-  )
-  Ok(Nil)
-}
-
-fn do_clean(dir: String, clean_store: Bool, keep_cache: Bool) -> Nil {
-  case keep_cache {
-    False -> {
-      // build/dev (컴파일 출력) + build/packages (의존성 소스) 삭제
-      let _ = simplifile.delete(dir <> "/build/dev")
-      let _ = simplifile.delete(dir <> "/build/packages")
-      Nil
-    }
-    True -> {
-      // build/packages만 삭제, build/dev (컴파일 캐시) 보존
-      let _ = simplifile.delete(dir <> "/build/packages")
-      Nil
-    }
-  }
-  let _ = simplifile.delete(dir <> "/node_modules")
-  io.println(color_green("Cleaned") <> " build artifacts")
-  case clean_store {
-    True ->
-      case gc.gc_all() {
-        Ok(#(hex_result, npm_result)) ->
-          io.println(
-            color_green("Store GC:")
-            <> " removed "
-            <> int.to_string(hex_result.removed_count)
-            <> " hex, "
-            <> int.to_string(npm_result.removed_count)
-            <> " npm packages",
-          )
-        Error(_) -> io.println("Store GC failed")
-      }
-    False -> Nil
-  }
-}
-
-fn do_publish(dir: String, replace: Bool, yes: Bool, dry_run: Bool) -> Nil {
-  // kir export로 gleam.toml 생성 후 gleam publish 위임
-  case do_export(dir) {
-    Ok(_) -> Nil
-    Error(e) -> {
-      print_error(e)
-    }
-  }
-  case dry_run {
-    True -> {
-      io.println(color_green("Dry run:") <> " publish simulated, no upload")
-    }
-    False -> {
-      let cmd =
-        "gleam publish"
-        <> case replace {
-          True -> " --replace"
-          False -> ""
-        }
-        <> case yes {
-          True -> " --yes"
-          False -> ""
-        }
-      run_gleam_cmd(cmd)
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// NO_COLOR 래퍼
-// ---------------------------------------------------------------------------
-
-fn color_green(s: String) -> String {
-  case platform.get_env("NO_COLOR") {
-    Ok(_) -> s
-    Error(_) -> ansi.green(s)
-  }
-}
-
-fn color_red(s: String) -> String {
-  case platform.get_env("NO_COLOR") {
-    Ok(_) -> s
-    Error(_) -> ansi.red(s)
-  }
-}
-
-fn color_yellow(s: String) -> String {
-  case platform.get_env("NO_COLOR") {
-    Ok(_) -> s
-    Error(_) -> ansi.yellow(s)
-  }
-}
-
-fn color_dim(s: String) -> String {
-  case platform.get_env("NO_COLOR") {
-    Ok(_) -> s
-    Error(_) -> ansi.dim(s)
-  }
-}
-
-fn color_bold_red(s: String) -> String {
-  case platform.get_env("NO_COLOR") {
-    Ok(_) -> s
-    Error(_) -> ansi.red(ansi.bold(s))
-  }
-}
-
-fn run_gleam_cmd(cmd: String) -> Nil {
-  let code = platform.exec_command(cmd)
-  case code {
-    0 -> Nil
-    _ -> platform.halt(code)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 헬퍼
-// ---------------------------------------------------------------------------
-
 fn read_version() -> String {
   platform.app_version() |> result.unwrap("unknown")
-}
-
-fn merge_npm_deps(config: KirConfig, npm_deps: List(Dependency)) -> KirConfig {
-  let prod = list.filter(npm_deps, fn(d) { !d.dev })
-  let dev = list.filter(npm_deps, fn(d) { d.dev })
-  KirConfig(
-    ..config,
-    npm_deps: list.append(config.npm_deps, prod),
-    npm_dev_deps: list.append(config.npm_dev_deps, dev),
-  )
-}
-
-/// @로 시작하면 npm, 아니면 hex로 추정
-fn detect_registry(name: String) -> types.Registry {
-  case string.starts_with(name, "@") {
-    True -> Npm
-    False -> Hex
-  }
-}
-
-fn warn_undeclared_npm(dir: String, cfg: KirConfig) -> Nil {
-  case ffi_detect.detect_npm_imports(dir) {
-    Ok(detections) -> {
-      let undeclared = ffi_detect.find_undeclared(detections, cfg)
-      let names =
-        list.map(undeclared, fn(d) { d.package_name })
-        |> list.unique
-      case names {
-        [] -> Nil
-        _ -> {
-          io.println(
-            color_yellow("Warning:") <> " undeclared npm imports detected:",
-          )
-          list.each(names, fn(n) { io.println("  " <> n) })
-        }
-      }
-    }
-    Error(_) -> Nil
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 오프라인 설치
-// ---------------------------------------------------------------------------
-
-fn do_install_offline(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  use lock <- result.try(
-    lockfile.read(dir)
-    |> result.map_error(LockErr),
-  )
-  // store에 모든 패키지가 있는지 확인
-  let missing =
-    list.filter(lock.packages, fn(p) {
-      case store.has_package(p.sha256, p.registry) {
-        Ok(True) -> False
-        _ -> True
-      }
-    })
-  case missing {
-    [] -> {
-      io.println(
-        "Installing "
-        <> int.to_string(list.length(lock.packages))
-        <> " packages from cache (offline)...",
-      )
-      use _ <- result.try(
-        installer.install_all(lock.packages, dir)
-        |> result.map_error(fn(_) {
-          UserError(detail: "offline install failed")
-        }),
-      )
-      use _ <- result.try(
-        installer.clean_stale(lock.packages, dir)
-        |> result.map_error(fn(_) { UserError(detail: "offline clean failed") }),
-      )
-      let _ = export.write_build_metadata(cfg, lock, dir)
-      io.println(
-        color_green("Installed")
-        <> " "
-        <> int.to_string(list.length(lock.packages))
-        <> " packages (offline)",
-      )
-      Ok(Nil)
-    }
-    _ -> {
-      io.println(
-        color_bold_red("error:") <> " the following packages are not cached:",
-      )
-      list.each(missing, fn(p) {
-        io.println(
-          "  "
-          <> p.name
-          <> "@"
-          <> p.version
-          <> " ("
-          <> types.registry_to_string(p.registry)
-          <> ")",
-        )
-      })
-      io.println("Run 'kir install' first to download them.")
-      Error(UserError(detail: "packages not cached for offline mode"))
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 선택적 업데이트
-// ---------------------------------------------------------------------------
-
-fn do_update_selective(
-  dir: String,
-  packages: List(String),
-) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  use lock <- result.try(
-    lockfile.read(dir)
-    |> result.map_error(LockErr),
-  )
-  io.println("Updating " <> string.join(packages, ", ") <> "...")
-  // 지정된 패키지만 lock에서 제거, 나머지 유지
-  let filtered_lock = lockfile.remove_packages(lock, packages)
-  use resolve_result <- result.try(
-    resolver.resolve_full(cfg, Ok(filtered_lock))
-    |> result.map_error(ResolveErr),
-  )
-  io.println(
-    color_green("Resolved")
-    <> " "
-    <> int.to_string(list.length(resolve_result.packages))
-    <> " packages",
-  )
-  io.println("Downloading and installing...")
-  use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security)
-    |> result.map_error(PipelineErr),
-  )
-  let installed = pipeline_result.packages
-  let new_lock = lockfile.from_packages(installed)
-  use _ <- result.try(
-    lockfile.write(new_lock, dir)
-    |> result.map_error(LockErr),
-  )
-  io.println(
-    color_green("Updated")
-    <> " "
-    <> string.join(packages, ", ")
-    <> ", wrote kir.lock",
-  )
-  let _ = export.write_build_metadata(cfg, new_lock, dir)
-  Ok(Nil)
-}
-
-// ---------------------------------------------------------------------------
-// outdated
-// ---------------------------------------------------------------------------
-
-fn outdated_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("List outdated dependencies")
-  glint.command(fn(_named, _args, _flags) {
-    case do_outdated(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn do_outdated(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  use lock <- result.try(
-    lockfile.read(dir)
-    |> result.map_error(LockErr),
-  )
-  let all_deps =
-    list.flatten([
-      cfg.hex_deps,
-      cfg.hex_dev_deps,
-      cfg.npm_deps,
-      cfg.npm_dev_deps,
-    ])
-  let direct_names = list.map(all_deps, fn(d) { #(d.name, d.registry) })
-  // 직접 의존성 중 lock에 있는 것만 확인
-  let outdated =
-    list.filter_map(direct_names, fn(pair) {
-      let #(name, registry) = pair
-      case lockfile.find_package(lock, name, registry) {
-        option.Some(pkg) -> {
-          let latest = get_latest_version(name, registry)
-          case latest {
-            Ok(latest_ver) ->
-              case
-                semver.parse_version(pkg.version),
-                semver.parse_version(latest_ver)
-              {
-                Ok(current), Ok(latest_parsed) ->
-                  case semver.compare(latest_parsed, current) {
-                    order.Gt ->
-                      Ok(#(
-                        name,
-                        pkg.version,
-                        latest_ver,
-                        types.registry_to_string(registry),
-                      ))
-                    _ -> Error(Nil)
-                  }
-                _, _ -> Error(Nil)
-              }
-            Error(_) -> Error(Nil)
-          }
-        }
-        option.None -> Error(Nil)
-      }
-    })
-  case outdated {
-    [] -> {
-      io.println(color_green("All dependencies are up to date"))
-      Ok(Nil)
-    }
-    _ -> {
-      io.println(
-        pad_right("Package", 24)
-        <> pad_right("Current", 12)
-        <> pad_right("Latest", 12)
-        <> "Registry",
-      )
-      list.each(outdated, fn(entry) {
-        let #(name, current, latest, registry) = entry
-        io.println(
-          pad_right(name, 24)
-          <> pad_right(current, 12)
-          <> pad_right(latest, 12)
-          <> registry,
-        )
-      })
-      Ok(Nil)
-    }
-  }
-}
-
-fn get_latest_version(
-  name: String,
-  registry: types.Registry,
-) -> Result(String, Nil) {
-  case registry {
-    Hex ->
-      case hex_registry.get_versions(name) {
-        Ok(versions) ->
-          list.map(versions, fn(v) { v.version })
-          |> list.filter_map(semver.parse_version)
-          |> list.sort(semver.compare)
-          |> list.last
-          |> result.map(semver.to_string)
-        Error(_) -> Error(Nil)
-      }
-    Npm ->
-      case npm_registry.get_versions(name) {
-        Ok(versions) ->
-          list.map(versions, fn(v) { v.version })
-          |> list.filter_map(semver.parse_version)
-          |> list.sort(semver.compare)
-          |> list.last
-          |> result.map(semver.to_string)
-        Error(_) -> Error(Nil)
-      }
-  }
-}
-
-fn pad_right(s: String, width: Int) -> String {
-  let len = string.length(s)
-  case len >= width {
-    True -> s <> " "
-    False -> s <> string.repeat(" ", width - len)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// why
-// ---------------------------------------------------------------------------
-
-fn why_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Explain why a package is installed")
-  glint.command(fn(_named, args, _flags) {
-    case args {
-      [name, ..] ->
-        case do_why(".", name) {
-          Ok(_) -> Nil
-          Error(e) -> print_error(e)
-        }
-      _ -> io.println("Usage: kir why <package>")
-    }
-  })
-}
-
-fn do_why(dir: String, pkg_name: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(
-    config.read_config(dir)
-    |> result.map_error(ConfigErr),
-  )
-  use lock <- result.try(
-    lockfile.read(dir)
-    |> result.map_error(LockErr),
-  )
-  // 패키지가 lock에 있는지 확인
-  case list.find(lock.packages, fn(p) { p.name == pkg_name }) {
-    Error(_) -> {
-      io.println(pkg_name <> " is not installed")
-      Ok(Nil)
-    }
-    Ok(pkg) -> {
-      io.println(
-        pkg.name
-        <> "@"
-        <> pkg.version
-        <> " ("
-        <> types.registry_to_string(pkg.registry)
-        <> ")",
-      )
-      // 직접 의존성인지 확인
-      let all_deps =
-        list.flatten([
-          cfg.hex_deps,
-          cfg.hex_dev_deps,
-          cfg.npm_deps,
-          cfg.npm_dev_deps,
-        ])
-      let is_direct =
-        list.any(all_deps, fn(d) {
-          d.name == pkg_name && d.registry == pkg.registry
-        })
-      case is_direct {
-        True -> {
-          let section = case pkg.registry {
-            Hex -> "[dependencies]"
-            Npm -> "[npm-dependencies]"
-          }
-          io.println("  direct dependency in " <> section)
-        }
-        False -> {
-          // version_infos에서 이 패키지를 의존하는 패키지 찾기
-          let version_infos = case resolver.resolve_full(cfg, Ok(lock)) {
-            Ok(resolve_result) -> resolve_result.version_infos
-            Error(_) -> dict.new()
-          }
-          let dependents = find_dependents(pkg_name, version_infos, lock)
-          case dependents {
-            [] -> io.println("  (dependency chain unknown)")
-            _ ->
-              list.each(dependents, fn(dep_name) {
-                io.println("  required by " <> dep_name)
-              })
-          }
-        }
-      }
-      Ok(Nil)
-    }
-  }
-}
-
-fn find_dependents(
-  pkg_name: String,
-  version_infos: dict.Dict(String, resolver.VersionInfo),
-  lock: types.KirLock,
-) -> List(String) {
-  list.filter_map(lock.packages, fn(p) {
-    let key = p.name <> ":" <> types.registry_to_string(p.registry)
-    case dict.get(version_infos, key) {
-      Ok(vi) ->
-        case list.any(vi.dependencies, fn(d) { d.name == pkg_name }) {
-          True -> Ok(p.name <> "@" <> p.version)
-          False -> Error(Nil)
-        }
-      Error(_) -> Error(Nil)
-    }
-  })
-}
-
-// ---------------------------------------------------------------------------
-// store verify
-// ---------------------------------------------------------------------------
-
-fn store_verify_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Verify cached package integrity")
-  glint.command(fn(_named, _args, _flags) {
-    case do_store_verify(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn do_store_verify(dir: String) -> Result(Nil, KirError) {
-  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
-  let results =
-    list.map(lock.packages, fn(p) {
-      let cached = case store.has_package(p.sha256, p.registry) {
-        Ok(True) -> True
-        _ -> False
-      }
-      #(p, cached)
-    })
-  let ok_count = list.count(results, fn(r) { r.1 })
-  let missing = list.filter(results, fn(r) { !r.1 })
-  list.each(results, fn(r) {
-    let #(p, cached) = r
-    let status = case cached {
-      True -> "  ✓ "
-      False -> "  ✗ "
-    }
-    io.println(
-      status
-      <> p.name
-      <> "@"
-      <> p.version
-      <> " ("
-      <> types.registry_to_string(p.registry)
-      <> ")",
-    )
-  })
-  io.println("")
-  case missing {
-    [] ->
-      io.println(
-        color_green("All")
-        <> " "
-        <> int.to_string(ok_count)
-        <> " packages verified in store",
-      )
-    _ ->
-      io.println(
-        color_red(int.to_string(list.length(missing)))
-        <> " packages missing from store. Run 'kir install' to restore.",
-      )
-  }
-  Ok(Nil)
-}
-
-// ---------------------------------------------------------------------------
-// 중복 선언 경고
-// ---------------------------------------------------------------------------
-
-fn warn_duplicate_deps(cfg: KirConfig) -> Nil {
-  let hex_names = list.map(cfg.hex_deps, fn(d) { d.name })
-  let hex_dev_names = list.map(cfg.hex_dev_deps, fn(d) { d.name })
-  let npm_names = list.map(cfg.npm_deps, fn(d) { d.name })
-  let npm_dev_names = list.map(cfg.npm_dev_deps, fn(d) { d.name })
-  // prod와 dev 양쪽에 같은 이름
-  let hex_dups =
-    list.filter(hex_names, fn(n) { list.contains(hex_dev_names, n) })
-  let npm_dups =
-    list.filter(npm_names, fn(n) { list.contains(npm_dev_names, n) })
-  let all_dups = list.append(hex_dups, npm_dups)
-  case all_dups {
-    [] -> Nil
-    _ -> {
-      io.println(
-        color_yellow("Warning:")
-        <> " duplicate declarations in deps and dev-deps:",
-      )
-      list.each(all_dups, fn(n) { io.println("  " <> n) })
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// diff
-// ---------------------------------------------------------------------------
-
-fn diff_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Show lock changes (update preview)")
-  glint.command(fn(_named, _args, _flags) {
-    case do_diff(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn do_diff(dir: String) -> Result(Nil, KirError) {
-  use cfg <- result.try(config.read_config(dir) |> result.map_error(ConfigErr))
-  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
-  // 전체 재해결 (update 시뮬레이션)
-  use resolve_result <- result.try(
-    resolver.resolve_full(cfg, Error(Nil))
-    |> result.map_error(ResolveErr),
-  )
-  let old_pkgs = lock.packages
-  let new_pkgs = resolve_result.packages
-  // 비교
-  let old_map =
-    list.map(old_pkgs, fn(p) {
-      #(p.name <> ":" <> types.registry_to_string(p.registry), p)
-    })
-    |> dict.from_list
-  let new_map =
-    list.map(new_pkgs, fn(p) {
-      #(p.name <> ":" <> types.registry_to_string(p.registry), p)
-    })
-    |> dict.from_list
-  let all_keys =
-    list.append(dict.keys(old_map), dict.keys(new_map))
-    |> list.unique
-    |> list.sort(string.compare)
-  let has_changes =
-    list.fold(all_keys, False, fn(changed, key) {
-      case dict.get(old_map, key), dict.get(new_map, key) {
-        Error(_), Ok(new) -> {
-          io.println(
-            color_green("+ ")
-            <> new.name
-            <> " v"
-            <> new.version
-            <> " ("
-            <> types.registry_to_string(new.registry)
-            <> ")",
-          )
-          True
-        }
-        Ok(old), Error(_) -> {
-          io.println(
-            color_red("- ")
-            <> old.name
-            <> " v"
-            <> old.version
-            <> " ("
-            <> types.registry_to_string(old.registry)
-            <> ")",
-          )
-          True
-        }
-        Ok(old), Ok(new) if old.version != new.version -> {
-          io.println(
-            color_yellow("~ ")
-            <> old.name
-            <> " v"
-            <> old.version
-            <> " → v"
-            <> new.version
-            <> " ("
-            <> types.registry_to_string(old.registry)
-            <> ")",
-          )
-          True
-        }
-        _, _ -> changed
-      }
-    })
-  case has_changes {
-    False -> io.println("No changes")
-    True -> Nil
-  }
-  Ok(Nil)
-}
-
-// ---------------------------------------------------------------------------
-// ls
-// ---------------------------------------------------------------------------
-
-fn ls_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("List installed packages with paths")
-  glint.command(fn(_named, _args, _flags) {
-    case do_ls(".") {
-      Ok(_) -> Nil
-      Error(e) -> print_error(e)
-    }
-  })
-}
-
-fn do_ls(dir: String) -> Result(Nil, KirError) {
-  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
-  let sorted = list.sort(lock.packages, types.compare_packages)
-  list.each(sorted, fn(p) {
-    let path = case p.registry {
-      Hex -> dir <> "/build/packages/" <> p.name
-      Npm -> dir <> "/node_modules/" <> p.name
-    }
-    let status = case simplifile.is_directory(path) {
-      Ok(True) -> "  ✓ "
-      _ -> "  ✗ "
-    }
-    io.println(
-      status
-      <> pad_right(p.name, 28)
-      <> pad_right("v" <> p.version, 12)
-      <> "("
-      <> types.registry_to_string(p.registry)
-      <> ")  "
-      <> path,
-    )
-  })
-  Ok(Nil)
-}
-
-// ---------------------------------------------------------------------------
-// doctor
-// ---------------------------------------------------------------------------
-
-fn doctor_cmd() -> glint.Command(Nil) {
-  use <- glint.command_help("Diagnose environment")
-  glint.command(fn(_named, _args, _flags) { do_doctor(".") })
-}
-
-fn do_doctor(dir: String) -> Nil {
-  // kirari version
-  let version = platform.app_version() |> result.unwrap("unknown")
-  io.println("kirari " <> version)
-  // Erlang/OTP
-  case
-    platform.run_command(
-      "erl -eval \"io:format(\\\"~s\\\", [erlang:system_info(otp_release)]),halt().\" -noshell",
-    )
-  {
-    Ok(otp) -> io.println("Erlang/OTP " <> string.trim(otp))
-    Error(_) -> io.println("Erlang/OTP not found")
-  }
-  // Gleam
-  case platform.run_command("gleam --version") {
-    Ok(gleam_ver) -> io.println(string.trim(gleam_ver))
-    Error(_) -> io.println("Gleam not found")
-  }
-  // Store
-  case platform.store_base_path() {
-    Ok(base) -> {
-      let hex_count = count_store_entries(base <> "/hex")
-      let npm_count = count_store_entries(base <> "/npm")
-      io.println(
-        "Store: "
-        <> base
-        <> " (hex: "
-        <> int.to_string(hex_count)
-        <> ", npm: "
-        <> int.to_string(npm_count)
-        <> ")",
-      )
-    }
-    Error(_) -> io.println("Store: not found")
-  }
-  // gleam.toml
-  case simplifile.is_file(dir <> "/gleam.toml") {
-    Ok(True) -> io.println("Config: gleam.toml ✓")
-    _ -> io.println("Config: gleam.toml ✗")
-  }
-  // kir.lock
-  case lockfile.read(dir) {
-    Ok(lock) ->
-      io.println(
-        "Lock: kir.lock ✓ ("
-        <> int.to_string(list.length(lock.packages))
-        <> " packages)",
-      )
-    Error(_) -> io.println("Lock: kir.lock ✗")
-  }
-}
-
-fn count_store_entries(path: String) -> Int {
-  case simplifile.read_directory(path) {
-    Ok(dirs) ->
-      list.fold(dirs, 0, fn(count, dir) {
-        case simplifile.read_directory(path <> "/" <> dir) {
-          Ok(entries) -> count + list.length(entries)
-          Error(_) -> count
-        }
-      })
-    Error(_) -> 0
-  }
 }

@@ -1,5 +1,6 @@
 //// Hex.pm 레지스트리 API 클라이언트
 
+import gleam/dict
 import gleam/dynamic/decode
 import gleam/http/request
 import gleam/httpc
@@ -230,5 +231,3 @@ fn requirements_as_list_decoder() -> decode.Decoder(List(VersionDependency)) {
     ))
   })
 }
-
-import gleam/dict

@@ -251,6 +251,59 @@ pub fn verify_frozen(
   }
 }
 
+/// 패키지 목록 diff 항목
+pub type DiffEntry {
+  Added(name: String, version: String, registry: Registry)
+  Removed(name: String, version: String, registry: Registry)
+  Changed(
+    name: String,
+    old_version: String,
+    new_version: String,
+    registry: Registry,
+  )
+}
+
+/// 두 lock 간 구조적 diff 계산
+pub fn diff(
+  old: KirLock,
+  new_packages: List(ResolvedPackage),
+) -> List(DiffEntry) {
+  let old_map =
+    list.map(old.packages, fn(p) {
+      #(p.name <> ":" <> types.registry_to_string(p.registry), p)
+    })
+    |> dict.from_list
+  let new_map =
+    list.map(new_packages, fn(p) {
+      #(p.name <> ":" <> types.registry_to_string(p.registry), p)
+    })
+    |> dict.from_list
+  let all_keys =
+    list.append(dict.keys(old_map), dict.keys(new_map))
+    |> list.unique
+    |> list.sort(string.compare)
+  list.filter_map(all_keys, fn(key) {
+    case dict.get(old_map, key), dict.get(new_map, key) {
+      Error(_), Ok(new) ->
+        Ok(Added(name: new.name, version: new.version, registry: new.registry))
+      Ok(old_pkg), Error(_) ->
+        Ok(Removed(
+          name: old_pkg.name,
+          version: old_pkg.version,
+          registry: old_pkg.registry,
+        ))
+      Ok(old_pkg), Ok(new) if old_pkg.version != new.version ->
+        Ok(Changed(
+          name: old_pkg.name,
+          old_version: old_pkg.version,
+          new_version: new.version,
+          registry: old_pkg.registry,
+        ))
+      _, _ -> Error(Nil)
+    }
+  })
+}
+
 fn describe_diff(old: KirLock, new: KirLock) -> String {
   let old_names =
     list.map(old.packages, fn(p) {

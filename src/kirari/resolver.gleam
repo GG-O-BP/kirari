@@ -368,13 +368,24 @@ fn parse_constraint(dep: Dependency) -> Result(Constraint, ResolverError) {
     Hex ->
       semver.parse_hex_constraint(dep.version_constraint)
       |> result.map_error(fn(e) {
-        IncompatibleVersions(package: dep.name, constraints: [e])
+        IncompatibleVersions(package: dep.name, constraints: [
+          semver_error_to_string(e),
+        ])
       })
     Npm ->
       semver.parse_npm_constraint(dep.version_constraint)
       |> result.map_error(fn(e) {
-        IncompatibleVersions(package: dep.name, constraints: [e])
+        IncompatibleVersions(package: dep.name, constraints: [
+          semver_error_to_string(e),
+        ])
       })
+  }
+}
+
+fn semver_error_to_string(e: semver.SemverError) -> String {
+  case e {
+    semver.InvalidVersion(d) -> d
+    semver.InvalidConstraint(d) -> d
   }
 }
 
@@ -553,4 +564,50 @@ fn check_platform_list(allowed: List(String), current: String) -> Bool {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 의존성 체인 분석
+// ---------------------------------------------------------------------------
+
+/// lock에서 pkg_name을 의존하는 패키지 목록 반환 ("name@version" 형식)
+pub fn find_dependents(
+  pkg_name: String,
+  version_infos: Dict(String, VersionInfo),
+  lock: KirLock,
+) -> List(String) {
+  list.filter_map(lock.packages, fn(p) {
+    let key = p.name <> ":" <> types.registry_to_string(p.registry)
+    case dict.get(version_infos, key) {
+      Ok(vi) ->
+        case list.any(vi.dependencies, fn(d) { d.name == pkg_name }) {
+          True -> Ok(p.name <> "@" <> p.version)
+          False -> Error(Nil)
+        }
+      Error(_) -> Error(Nil)
+    }
+  })
+}
+
+/// 레지스트리에서 최신 버전 조회
+pub fn get_latest_version(
+  name: String,
+  registry: Registry,
+) -> Result(String, Nil) {
+  let versions = case registry {
+    Hex ->
+      hex.get_versions(name)
+      |> result.map(list.map(_, fn(v) { v.version }))
+      |> result.replace_error(Nil)
+    Npm ->
+      npm.get_versions(name)
+      |> result.map(list.map(_, fn(v) { v.version }))
+      |> result.replace_error(Nil)
+  }
+  use vs <- result.try(versions)
+  vs
+  |> list.filter_map(semver.parse_version)
+  |> list.sort(semver.compare)
+  |> list.last
+  |> result.map(semver.to_string)
 }

@@ -1,0 +1,85 @@
+//// CLI 에러 타입 — 모든 모듈 에러를 래핑하는 최상위 에러
+
+import gleam/string
+import kirari/config
+import kirari/export
+import kirari/ffi as ffi_detect
+import kirari/lockfile
+import kirari/migrate
+import kirari/pipeline
+import kirari/resolver
+import kirari/types
+
+/// 최상위 에러 타입 — 모든 모듈 에러를 래핑
+pub type KirError {
+  ConfigErr(config.ConfigError)
+  MigrateErr(migrate.MigrateError)
+  LockErr(lockfile.LockfileError)
+  ResolveErr(resolver.ResolverError)
+  PipelineErr(pipeline.PipelineError)
+  ExportErr(export.ExportError)
+  FfiErr(ffi_detect.FfiError)
+  UserError(detail: String)
+}
+
+/// 에러를 사람이 읽을 수 있는 문자열로 변환
+pub fn format_error(error: KirError) -> String {
+  case error {
+    ConfigErr(e) ->
+      case e {
+        config.FileNotFound(p) -> "file not found: " <> p
+        config.ParseError(d) -> "parse error: " <> d
+        config.InvalidField(f, d) -> "invalid field " <> f <> ": " <> d
+        config.WriteError(p, d) -> "write error " <> p <> ": " <> d
+      }
+    MigrateErr(e) ->
+      case e {
+        migrate.FileNotFound(p) -> "file not found: " <> p
+        migrate.ParseError(d) -> "parse error: " <> d
+        migrate.InvalidField(f, d) -> "invalid field " <> f <> ": " <> d
+      }
+    LockErr(e) ->
+      case e {
+        lockfile.FileNotFound(p) -> "lockfile not found: " <> p
+        lockfile.ParseError(d) -> "lockfile parse error: " <> d
+        lockfile.FrozenMismatch(d) -> "frozen lockfile mismatch: " <> d
+        lockfile.WriteError(p, d) -> "lockfile write error " <> p <> ": " <> d
+      }
+    ResolveErr(e) ->
+      case e {
+        resolver.IncompatibleVersions(pkg, cs) ->
+          "no compatible version for "
+          <> pkg
+          <> " (constraints: "
+          <> string.join(cs, ", ")
+          <> ")"
+        resolver.PackageNotFound(name, reg) ->
+          "package not found: "
+          <> name
+          <> " ("
+          <> types.registry_to_string(reg)
+          <> ")"
+        resolver.RegistryError(d) -> "registry error: " <> d
+        resolver.CyclicDependency(c) ->
+          "cyclic dependency: " <> string.join(c, " → ")
+      }
+    PipelineErr(e) ->
+      case e {
+        pipeline.DownloadError(name, ver, d) ->
+          "download failed: " <> name <> "@" <> ver <> " — " <> d
+        pipeline.StoreErr(se) -> "store error: " <> string.inspect(se)
+        pipeline.InstallErr(ie) -> "install error: " <> string.inspect(ie)
+        pipeline.ProvenanceErr(name, detail) ->
+          "provenance verification failed: " <> name <> " — " <> detail
+      }
+    ExportErr(e) ->
+      case e {
+        export.WriteError(p, d) -> "export write error " <> p <> ": " <> d
+      }
+    FfiErr(e) ->
+      case e {
+        ffi_detect.IoError(d) -> "ffi detection error: " <> d
+      }
+    UserError(d) -> d
+  }
+}

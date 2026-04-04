@@ -8,7 +8,9 @@ import gleam/json
 import gleam/list
 import gleam/result
 import gleam/string
+import kirari/platform
 import kirari/security
+import simplifile
 
 /// npm 레지스트리 에러 타입
 pub type NpmError {
@@ -334,48 +336,5 @@ fn cache_dir() -> String {
 }
 
 fn current_unix_seconds() -> Int {
-  let ts = platform.get_current_timestamp()
-  parse_ts_to_seconds(ts) |> result.unwrap(0)
+  platform.current_unix_seconds()
 }
-
-fn parse_ts_to_seconds(ts: String) -> Result(Int, Nil) {
-  let cleaned =
-    string.replace(ts, "T", "-")
-    |> string.replace(":", "-")
-    |> string.replace("Z", "")
-  case string.split(cleaned, "-") {
-    [y_s, mo_s, d_s, h_s, mi_s, s_s] -> {
-      use y <- result.try(int.parse(y_s))
-      use mo <- result.try(int.parse(mo_s))
-      use d <- result.try(int.parse(d_s))
-      use h <- result.try(int.parse(h_s))
-      use mi <- result.try(int.parse(mi_s))
-      use s <- result.try(int.parse(s_s))
-      let days = { y - 1970 } * 365 + { y - 1969 } / 4 + month_days(mo) + d - 1
-      Ok(days * 86_400 + h * 3600 + mi * 60 + s)
-    }
-    _ -> Error(Nil)
-  }
-}
-
-fn month_days(month: Int) -> Int {
-  case month {
-    1 -> 0
-    2 -> 31
-    3 -> 59
-    4 -> 90
-    5 -> 120
-    6 -> 151
-    7 -> 181
-    8 -> 212
-    9 -> 243
-    10 -> 273
-    11 -> 304
-    12 -> 334
-    _ -> 0
-  }
-}
-
-import gleam/int
-import kirari/platform
-import simplifile

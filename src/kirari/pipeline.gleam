@@ -2,7 +2,6 @@
 
 import gleam/dict
 import gleam/erlang/process
-import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
@@ -24,11 +23,19 @@ pub type PipelineError {
   ProvenanceErr(name: String, detail: String)
 }
 
+/// pipeline 경고 타입 — cli에서 출력 담당
+pub type Warning {
+  ScriptBlocked(name: String, version: String)
+  Deprecated(name: String, version: String, reason: String)
+  PlatformMismatch(name: String, version: String, os: String, arch: String)
+}
+
 /// pipeline 실행 결과
 pub type PipelineResult {
   PipelineResult(
     packages: List(ResolvedPackage),
     bin_map: List(#(String, List(#(String, String)))),
+    warnings: List(Warning),
   )
 }
 
@@ -63,14 +70,27 @@ pub fn run(
         bins -> Ok(#(dr.package.name, bins))
       }
     })
-  // 2. 스크립트 정책 경고 + deprecated/retired 경고
-  warn_scripts(updated, security)
-  warn_deprecated(updated, ctx)
+  // 2. 스크립트 정책 경고 + deprecated/retired 경고 수집
+  let warnings =
+    list.append(
+      collect_script_warnings(updated, security),
+      collect_deprecation_warnings(updated, ctx),
+    )
   // 3. 프로젝트에 설치
-  use _ <- result.try(
+  use install_warnings <- result.try(
     installer.install_all(updated, project_dir)
     |> result.map_error(InstallErr),
   )
+  let warnings =
+    list.append(
+      warnings,
+      list.map(install_warnings, fn(w) {
+        case w {
+          installer.PlatformMismatch(name, version, os, arch) ->
+            PlatformMismatch(name: name, version: version, os: os, arch: arch)
+        }
+      }),
+    )
   // 4. bin 심볼릭 링크
   use _ <- result.try(
     installer.link_bins(bin_map, project_dir)
@@ -81,46 +101,39 @@ pub fn run(
     installer.clean_stale(updated, project_dir)
     |> result.map_error(InstallErr),
   )
-  Ok(PipelineResult(packages: updated, bin_map: bin_map))
+  Ok(PipelineResult(packages: updated, bin_map: bin_map, warnings: warnings))
 }
 
 // ---------------------------------------------------------------------------
-// 스크립트 정책 경고
+// 경고 수집 (데이터 반환, 출력은 cli 담당)
 // ---------------------------------------------------------------------------
 
-fn warn_scripts(
+fn collect_script_warnings(
   packages: List(ResolvedPackage),
   security: SecurityConfig,
-) -> Nil {
-  let violators =
-    list.filter(packages, fn(pkg) {
-      pkg.has_scripts && !is_script_allowed(pkg.name, security.npm_scripts)
-    })
-  list.each(violators, fn(pkg) {
-    io.println(
-      "\u{26a0} "
-      <> pkg.name
-      <> "@"
-      <> pkg.version
-      <> " has install scripts (blocked by npm-scripts policy)",
-    )
+) -> List(Warning) {
+  list.filter_map(packages, fn(pkg) {
+    case pkg.has_scripts && !is_script_allowed(pkg.name, security.npm_scripts) {
+      True -> Ok(ScriptBlocked(name: pkg.name, version: pkg.version))
+      False -> Error(Nil)
+    }
   })
 }
 
-fn warn_deprecated(packages: List(ResolvedPackage), ctx: DownloadContext) -> Nil {
-  list.each(packages, fn(pkg) {
+fn collect_deprecation_warnings(
+  packages: List(ResolvedPackage),
+  ctx: DownloadContext,
+) -> List(Warning) {
+  list.filter_map(packages, fn(pkg) {
     let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
     case dict.get(ctx.version_infos, key) {
       Ok(vi) if vi.deprecated != "" ->
-        io.println(
-          "\u{26a0} "
-          <> pkg.name
-          <> "@"
-          <> pkg.version
-          <> " is deprecated: "
-          <> vi.deprecated,
-        )
-      _ -> Nil
+        Ok(Deprecated(
+          name: pkg.name,
+          version: pkg.version,
+          reason: vi.deprecated,
+        ))
+      _ -> Error(Nil)
     }
   })
 }
@@ -286,7 +299,12 @@ fn verify_provenance_if_npm(
         ctx.npm_keys,
         ctx.provenance,
       )
-      |> result.map_error(fn(detail) { ProvenanceErr(pkg.name, detail) })
+      |> result.map_error(fn(e) {
+        case e {
+          security.SignatureError(detail) -> ProvenanceErr(pkg.name, detail)
+          _ -> ProvenanceErr(pkg.name, "signature verification failed")
+        }
+      })
     }
   }
 }

@@ -511,3 +511,16 @@ pub fn remove_dependency(
       )
   }
 }
+
+/// deps와 dev-deps 양쪽에 중복 선언된 패키지명 반환
+pub fn find_duplicate_deps(config: KirConfig) -> List(String) {
+  let hex_names = list.map(config.hex_deps, fn(d) { d.name })
+  let hex_dev_names = list.map(config.hex_dev_deps, fn(d) { d.name })
+  let npm_names = list.map(config.npm_deps, fn(d) { d.name })
+  let npm_dev_names = list.map(config.npm_dev_deps, fn(d) { d.name })
+  let hex_dups =
+    list.filter(hex_names, fn(n) { list.contains(hex_dev_names, n) })
+  let npm_dups =
+    list.filter(npm_names, fn(n) { list.contains(npm_dev_names, n) })
+  list.append(hex_dups, npm_dups)
+}

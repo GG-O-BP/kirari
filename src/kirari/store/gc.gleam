@@ -1,6 +1,5 @@
 //// Store garbage collection — 레지스트리별 보존 정책
 
-import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
@@ -136,62 +135,14 @@ fn gc_by_meta(root: String, policy: GcPolicy) -> Result(GcResult, GcError) {
 }
 
 fn is_expired(stored_at: String, cutoff_seconds: Int) -> Bool {
-  case parse_timestamp_to_seconds(stored_at) {
+  case platform.parse_timestamp_to_seconds(stored_at) {
     Ok(ts) -> ts < cutoff_seconds
     Error(_) -> False
   }
 }
 
 fn current_unix_seconds() -> Int {
-  // Erlang의 현재 시간을 Unix 초로
-  let ts = platform.get_current_timestamp()
-  // "2026-04-04T09:00:00Z" 형식 → 파싱하여 대략적인 초 계산
-  // 간단한 구현: 현재 시각 기반 비교를 .meta 파일 mtime으로 대체
-  case parse_timestamp_to_seconds(ts) {
-    Ok(s) -> s
-    Error(_) -> 0
-  }
-}
-
-fn parse_timestamp_to_seconds(ts: String) -> Result(Int, Nil) {
-  // "2026-04-04T09:00:00Z" → 대략적 Unix seconds
-  let cleaned =
-    string.replace(ts, "T", "-")
-    |> string.replace(":", "-")
-    |> string.replace("Z", "")
-  let parts = string.split(cleaned, "-")
-  case parts {
-    [y_s, mo_s, d_s, h_s, mi_s, s_s] -> {
-      use y <- result.try(int.parse(y_s))
-      use mo <- result.try(int.parse(mo_s))
-      use d <- result.try(int.parse(d_s))
-      use h <- result.try(int.parse(h_s))
-      use mi <- result.try(int.parse(mi_s))
-      use s <- result.try(int.parse(s_s))
-      // 대략적 계산 (윤년 무시)
-      let days = { y - 1970 } * 365 + { y - 1969 } / 4 + month_days(mo) + d - 1
-      Ok(days * 86_400 + h * 3600 + mi * 60 + s)
-    }
-    _ -> Error(Nil)
-  }
-}
-
-fn month_days(month: Int) -> Int {
-  case month {
-    1 -> 0
-    2 -> 31
-    3 -> 59
-    4 -> 90
-    5 -> 120
-    6 -> 151
-    7 -> 181
-    8 -> 212
-    9 -> 243
-    10 -> 273
-    11 -> 304
-    12 -> 334
-    _ -> 0
-  }
+  platform.current_unix_seconds()
 }
 
 fn list_dirs(path: String) -> Result(List(String), Nil) {

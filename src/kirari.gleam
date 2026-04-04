@@ -1,3 +1,5 @@
+//// kirari 진입점 — CLI 실행 및 에러 처리
+
 import argv
 import kirari/cli
 import kirari/platform

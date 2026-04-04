@@ -1,9 +1,9 @@
 //// Hex 전용 content-addressable 패키지 저장소 — ~/.kir/store/hex
 
 import gleam/result
-import gleam/string
 import kirari/platform
 import kirari/security
+import kirari/store/cas
 import kirari/store/types as store_types
 import kirari/tarball
 import kirari/types
@@ -15,18 +15,7 @@ import simplifile
 
 /// KIR_STORE/hex 또는 ~/.kir/store/hex 경로를 반환, 없으면 생성
 pub fn store_root() -> Result(String, store_types.StoreError) {
-  use base <- result.try(
-    platform.store_base_path()
-    |> result.map_error(fn(e) { store_types.HomeNotFound(e) }),
-  )
-  let root = base <> "/hex"
-  use _ <- result.try(
-    simplifile.create_directory_all(root)
-    |> result.map_error(fn(e) {
-      store_types.IoError(simplifile.describe_error(e))
-    }),
-  )
-  Ok(root)
+  cas.store_root("hex")
 }
 
 // ---------------------------------------------------------------------------
@@ -36,21 +25,13 @@ pub fn store_root() -> Result(String, store_types.StoreError) {
 /// SHA256으로 저장소에 패키지가 있는지 확인
 pub fn has_package(sha256: String) -> Result(Bool, store_types.StoreError) {
   use root <- result.try(store_root())
-  let path = package_dir(root, sha256)
-  case simplifile.is_directory(path) {
-    Ok(True) -> Ok(True)
-    _ -> Ok(False)
-  }
+  cas.has_package(sha256, root)
 }
 
 /// SHA256으로 저장된 패키지의 경로 반환
 pub fn package_path(sha256: String) -> Result(String, store_types.StoreError) {
   use root <- result.try(store_root())
-  let path = package_dir(root, sha256)
-  case simplifile.is_directory(path) {
-    Ok(True) -> Ok(path)
-    _ -> Error(store_types.IoError("package not in store: " <> sha256))
-  }
+  cas.package_path(sha256, root)
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +58,7 @@ pub fn store_package(
   )
 
   use root <- result.try(store_root())
-  let final_path = package_dir(root, expected_sha256)
+  let final_path = cas.package_dir(root, expected_sha256)
 
   // 2. 이미 존재하면 바로 반환
   case simplifile.is_directory(final_path) {
@@ -100,7 +81,7 @@ pub fn store_package(
       )
 
       // 4. 2글자 prefix 디렉토리 생성
-      let prefix_dir = prefix_path(root, expected_sha256)
+      let prefix_dir = cas.prefix_path(root, expected_sha256)
       use _ <- result.try(
         simplifile.create_directory_all(prefix_dir)
         |> result.map_error(fn(e) {
@@ -135,17 +116,4 @@ pub fn store_package(
       }
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// 내부 헬퍼
-// ---------------------------------------------------------------------------
-
-fn package_dir(root: String, sha256: String) -> String {
-  prefix_path(root, sha256) <> "/" <> sha256
-}
-
-fn prefix_path(root: String, sha256: String) -> String {
-  let prefix = string.slice(sha256, 0, 2)
-  root <> "/" <> prefix
 }
