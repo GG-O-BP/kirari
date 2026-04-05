@@ -364,6 +364,269 @@ fn mock_fetch(
           license: "",
         ),
       ])
+    // Bug 1 테스트: 부분 범위 겹침에서 잔여 보존
+    "narrow_a", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "narrow_shared",
+              version_constraint: ">= 1.0.0 and < 3.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "narrow_b", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "narrow_shared",
+              version_constraint: ">= 2.0.0 and < 4.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "narrow_shared", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "2.0.0",
+          published_at: "2024-06-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "2.5.0",
+          published_at: "2024-09-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "3.0.0",
+          published_at: "2025-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    // Bug 1 테스트: 세 패키지 교차 제약
+    "tri_x", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "tri_shared",
+              version_constraint: ">= 1.0.0 and < 4.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "tri_y", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "tri_shared",
+              version_constraint: ">= 2.0.0 and < 5.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "tri_z", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "tri_shared",
+              version_constraint: ">= 3.0.0 and < 4.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "tri_shared", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "2.0.0",
+          published_at: "2024-06-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "3.0.0",
+          published_at: "2024-09-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "4.0.0",
+          published_at: "2025-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
     _, _ -> Error(resolver.PackageNotFound(name, registry))
   }
 }
@@ -879,4 +1142,81 @@ pub fn resolve_diamond_conflict_disjoint_test() {
     ])
   let assert Error(resolver.ResolutionConflict(_, _)) =
     resolver.resolve_with(config, Error(Nil), mock_fetch)
+}
+
+// ---------------------------------------------------------------------------
+// 부분 범위 겹침에서 잔여 보존 (Bug 1: resolve_incompatibilities 피벗 정확성)
+// ---------------------------------------------------------------------------
+
+pub fn resolve_partial_range_overlap_test() {
+  // narrow_a → narrow_shared >= 1.0.0 < 3.0.0
+  // narrow_b → narrow_shared >= 2.0.0 < 4.0.0
+  // 교집합 [2.0, 3.0) → narrow_shared@2.5.0 또는 2.0.0 선택 가능
+  let config =
+    test_config([
+      Dependency(
+        name: "narrow_a",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+      Dependency(
+        name: "narrow_b",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+    ])
+  let assert Ok(resolved) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
+  let assert Ok(shared) =
+    list.find(resolved, fn(p) { p.name == "narrow_shared" })
+  // 2.0.0 또는 2.5.0 (둘 다 [2.0, 3.0) 범위 내)
+  assert shared.version == "2.5.0" || shared.version == "2.0.0"
+}
+
+// ---------------------------------------------------------------------------
+// 세 패키지 교차 제약 (Bug 1: 다중 incompatibility resolution)
+// ---------------------------------------------------------------------------
+
+pub fn resolve_three_way_constraint_test() {
+  // tri_x → tri_shared >= 1.0.0 < 4.0.0
+  // tri_y → tri_shared >= 2.0.0 < 5.0.0
+  // tri_z → tri_shared >= 3.0.0 < 4.0.0
+  // 교집합 [3.0, 4.0) → tri_shared@3.0.0
+  let config =
+    test_config([
+      Dependency(
+        name: "tri_x",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+      Dependency(
+        name: "tri_y",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+      Dependency(
+        name: "tri_z",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+    ])
+  let assert Ok(resolved) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
+  let assert Ok(shared) = list.find(resolved, fn(p) { p.name == "tri_shared" })
+  assert shared.version == "3.0.0"
 }

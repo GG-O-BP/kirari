@@ -77,6 +77,35 @@ pub fn intersect(a: Term, b: Term) -> Result(Term, Nil) {
   }
 }
 
+/// 같은 패키지의 두 Term 합집합 (PubGrub resolution 피벗용)
+/// 허용 버전 = a 허용 ∪ b 허용
+pub fn union(a: Term, b: Term) -> Result(Term, Nil) {
+  case to_key(package(a)) == to_key(package(b)) {
+    False -> Error(Nil)
+    True -> {
+      let pkg = package(a)
+      case a, b {
+        Positive(_, ra), Positive(_, rb) ->
+          Ok(Positive(pkg, semver.range_union(ra, rb)))
+        Negative(_, ra), Negative(_, rb) ->
+          Ok(Negative(pkg, semver.range_intersect(ra, rb)))
+        Positive(_, r_pos), Negative(_, r_neg) ->
+          Ok(Negative(pkg, semver.range_minus(r_neg, r_pos)))
+        Negative(_, r_neg), Positive(_, r_pos) ->
+          Ok(Negative(pkg, semver.range_minus(r_neg, r_pos)))
+      }
+    }
+  }
+}
+
+/// Term이 항상 참인지 판정 (Negative(∅) = any = 항상 만족)
+pub fn is_any(t: Term) -> Bool {
+  case t {
+    Negative(_, r) -> semver.range_is_empty(r)
+    Positive(_, _) -> False
+  }
+}
+
 /// Term이 특정 버전을 만족하는지 판정
 pub fn satisfies_version(t: Term, v: Version) -> Bool {
   case t {

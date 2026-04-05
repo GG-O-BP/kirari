@@ -337,7 +337,8 @@ fn do_resolve_conflict(
                   if satisfier_level == prior_level || prior_level < 1
                 -> {
                   // 같은 레벨이거나 backtrack 불가 → cause와 resolve하여 계속
-                  let new_inc = resolve_incompatibilities(inc, cause)
+                  let pivot_key = term.to_key(term.package(satisfier_term))
+                  let new_inc = resolve_incompatibilities(inc, cause, pivot_key)
                   let state = add_incompatibility(state, new_inc)
                   do_resolve_conflict(state, new_inc)
                 }
@@ -449,19 +450,31 @@ fn find_prior_satisfier_level(
 }
 
 /// 두 incompatibility를 결합 (PubGrub resolution)
-/// 피벗 패키지(양쪽에 반대 극성으로 등장)의 term은 상쇄하여 제거
-/// 비피벗 패키지는 intersect로 병합
+/// 피벗 패키지: union 후 any()이면 제거, 아니면 잔여 보존
+/// 비피벗 패키지: intersect로 병합
 fn resolve_incompatibilities(
   a: Incompatibility,
   b: Incompatibility,
+  pivot_key: String,
 ) -> Incompatibility {
   let combined_terms =
     dict.fold(a.terms, b.terms, fn(acc, key, a_term) {
       case dict.get(acc, key) {
         Ok(b_term) -> {
-          case is_opposite_polarity(a_term, b_term) {
-            True -> dict.delete(acc, key)
+          case key == pivot_key {
+            True -> {
+              // 피벗: union 계산, any()이면 상쇄
+              case term.union(a_term, b_term) {
+                Ok(u) ->
+                  case term.is_any(u) {
+                    True -> dict.delete(acc, key)
+                    False -> dict.insert(acc, key, u)
+                  }
+                Error(_) -> dict.delete(acc, key)
+              }
+            }
             False -> {
+              // 비피벗: intersect로 병합
               case term.intersect(a_term, b_term) {
                 Ok(merged) ->
                   case is_trivial(merged) {
@@ -477,14 +490,6 @@ fn resolve_incompatibilities(
       }
     })
   Incompatibility(terms: combined_terms, cause: ConflictCause(a, b))
-}
-
-/// 두 term의 극성이 반대인지 판정 (피벗 상쇄 조건)
-fn is_opposite_polarity(a: term.Term, b: term.Term) -> Bool {
-  case a, b {
-    Positive(_, _), Negative(_, _) | Negative(_, _), Positive(_, _) -> True
-    _, _ -> False
-  }
 }
 
 /// term이 의미 없는지 (Positive(Empty) = 항상 거짓, Negative(Full) = 항상 거짓)

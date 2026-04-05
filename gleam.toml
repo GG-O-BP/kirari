@@ -1,5 +1,5 @@
 name = "kirari"
-version = "1.3.2"
+version = "1.3.3"
 description = "A unified package manager for Gleam — Hex + npm in one workflow"
 licences = ["MPL-2.0"]
 
