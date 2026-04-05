@@ -800,6 +800,11 @@ pub fn version_range_exact(v: Version) -> VersionRange {
   Interval(min: Ok(v), min_inclusive: True, max: Ok(v), max_inclusive: True)
 }
 
+/// Zero version (0.0.0) — PubGrub root 패키지용
+pub fn zero() -> Version {
+  Version(major: 0, minor: 0, patch: 0, pre: "")
+}
+
 /// Constraint를 VersionRange로 변환 (opaque 접근 필요)
 pub fn constraint_to_range(c: Constraint) -> VersionRange {
   case c {

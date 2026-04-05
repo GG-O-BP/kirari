@@ -4,8 +4,8 @@ import gleam/dict.{type Dict}
 import gleam/list
 import kirari/resolver/incompatibility.{type Incompatibility}
 import kirari/resolver/term.{
-  type PackageRef, type Relation, type Term, Contradicted, Inconclusive,
-  Negative, Positive, Satisfied,
+  type PackageRef, type Relation, type Term, Contradicted, Negative, Positive,
+  Satisfied,
 }
 import kirari/semver.{type Version, type VersionRange}
 
@@ -172,9 +172,9 @@ pub fn relation(ps: PartialSolution, t: Term) -> Relation {
       let accumulated = get_accumulated_range(ps, key)
       case semver.range_is_empty(accumulated) {
         True ->
-          // 패키지에 대한 정보 없음 → term이 Negative면 자동 만족
+          // 모든 버전이 제약에 의해 배제됨
           case t {
-            Positive(_, _) -> Inconclusive
+            Positive(_, _) -> Contradicted
             Negative(_, _) -> Satisfied
           }
         False -> term.relation(t, accumulated)

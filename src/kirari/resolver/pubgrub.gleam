@@ -218,9 +218,8 @@ fn propagate_incompatibilities(
         // 모든 term 만족됨 → 충돌!
         AllSatisfied -> {
           use state <- result.try(resolve_conflict(state, inc))
-          // 충돌 해결 후 모든 incompatibility 패키지부터 다시 전파
-          let all_keys = dict.keys(state.incompatibilities)
-          unit_propagation(state, all_keys)
+          let changed_keys = dict.keys(state.incompatibilities)
+          unit_propagation(state, changed_keys)
         }
         // 하나만 미결정 → 유도
         AlmostSatisfied(unsatisfied_key, unsatisfied_term) -> {
@@ -450,7 +449,8 @@ fn find_prior_satisfier_level(
 }
 
 /// 두 incompatibility를 결합 (PubGrub resolution)
-/// 피벗 패키지(양쪽에 등장)의 보완적 term은 상쇄하여 제거
+/// 피벗 패키지(양쪽에 반대 극성으로 등장)의 term은 상쇄하여 제거
+/// 비피벗 패키지는 intersect로 병합
 fn resolve_incompatibilities(
   a: Incompatibility,
   b: Incompatibility,
@@ -459,8 +459,7 @@ fn resolve_incompatibilities(
     dict.fold(a.terms, b.terms, fn(acc, key, a_term) {
       case dict.get(acc, key) {
         Ok(b_term) -> {
-          // 같은 패키지: 하나가 Pos(R), 다른 것이 Neg(R)이면 피벗 → 제거
-          case should_eliminate(a_term, b_term) {
+          case is_opposite_polarity(a_term, b_term) {
             True -> dict.delete(acc, key)
             False -> {
               case term.intersect(a_term, b_term) {
@@ -480,9 +479,8 @@ fn resolve_incompatibilities(
   Incompatibility(terms: combined_terms, cause: ConflictCause(a, b))
 }
 
-/// 두 term이 보완적이어서 상쇄되는지 판정
-/// PubGrub resolution에서 피벗 패키지는 Pos+Neg 조합이면 제거
-fn should_eliminate(a: term.Term, b: term.Term) -> Bool {
+/// 두 term의 극성이 반대인지 판정 (피벗 상쇄 조건)
+fn is_opposite_polarity(a: term.Term, b: term.Term) -> Bool {
   case a, b {
     Positive(_, _), Negative(_, _) | Negative(_, _), Positive(_, _) -> True
     _, _ -> False
@@ -688,9 +686,7 @@ fn add_version_dependencies(
   // 먼저 enrichment 시도 (Hex에서 의존성이 비어있을 때)
   use deps <- result.try(enrich_deps(chosen, pkg_ref, ctx))
 
-  let all_deps =
-    list.append(deps, chosen.optional_dependencies)
-    |> list.map(apply_override(_, ctx.overrides))
+  let all_deps = list.map(deps, apply_override(_, ctx.overrides))
 
   let v = case semver.parse_version(chosen.version) {
     Ok(v) -> v
@@ -888,16 +884,7 @@ fn parse_dep_range(dep: Dependency) -> semver.VersionRange {
 }
 
 fn make_root_version() -> Version {
-  case semver.parse_version("0.0.0") {
-    Ok(v) -> v
-    Error(_) -> {
-      // 이 경로에 도달하면 안 됨
-      case semver.parse_version("0.0.0") {
-        Ok(v) -> v
-        Error(_) -> make_root_version()
-      }
-    }
-  }
+  semver.zero()
 }
 
 fn matches_platform(vi: VersionInfoCompact, registry: Registry) -> Bool {

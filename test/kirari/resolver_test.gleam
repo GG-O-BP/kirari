@@ -230,6 +230,140 @@ fn mock_fetch(
           license: "",
         ),
       ])
+    // optional dependency 테스트용
+    "opt_parent", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [
+            Dependency(
+              name: "opt_missing",
+              version_constraint: ">= 99.0.0",
+              registry: Hex,
+              dev: False,
+              optional: True,
+              package_name: Error(Nil),
+            ),
+          ],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "opt_missing", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    // 다이아몬드 충돌 감지 테스트용 (교집합 없는 범위)
+    "excl_a", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "excl_shared",
+              version_constraint: ">= 1.0.0 and < 2.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "excl_b", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [
+            Dependency(
+              name: "excl_shared",
+              version_constraint: ">= 2.0.0 and < 3.0.0",
+              registry: Hex,
+              dev: False,
+              optional: False,
+              package_name: Error(Nil),
+            ),
+          ],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
+    "excl_shared", Hex ->
+      Ok([
+        VersionInfo(
+          tarball_url: "",
+          version: "1.0.0",
+          published_at: "2024-01-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+        VersionInfo(
+          tarball_url: "",
+          version: "2.0.0",
+          published_at: "2024-06-01T00:00:00Z",
+          dependencies: [],
+          peer_dependencies: [],
+          optional_dependencies: [],
+          os: [],
+          cpu: [],
+          has_scripts: False,
+          signatures: [],
+          integrity: "",
+          deprecated: "",
+          license: "",
+        ),
+      ])
     _, _ -> Error(resolver.PackageNotFound(name, registry))
   }
 }
@@ -687,4 +821,62 @@ pub fn classify_dev_only_chain_test() {
   let assert Ok(hljs) =
     list.find(result.packages, fn(p) { p.name == "highlight.js" })
   assert hljs.dev == True
+}
+
+// ---------------------------------------------------------------------------
+// optional dependency는 hard constraint가 아님 (Bug 3)
+// ---------------------------------------------------------------------------
+
+pub fn resolve_optional_dep_not_required_test() {
+  // opt_parent@1.0.0의 optional_deps에 opt_missing >= 99.0.0이 있지만
+  // 99.0.0은 존재하지 않음 → optional이므로 resolution은 성공해야 함
+  let config =
+    test_config([
+      Dependency(
+        name: "opt_parent",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+    ])
+  let assert Ok(resolved) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
+  // opt_parent만 설치, opt_missing은 미포함
+  assert list.length(resolved) == 1
+  let assert [pkg] = resolved
+  assert pkg.name == "opt_parent"
+  assert pkg.version == "1.0.0"
+}
+
+// ---------------------------------------------------------------------------
+// 다이아몬드 충돌 감지 (Bug 2: accumulated 빈 범위에서 Contradicted)
+// ---------------------------------------------------------------------------
+
+pub fn resolve_diamond_conflict_disjoint_test() {
+  // excl_a → excl_shared >= 1.0.0 < 2.0.0
+  // excl_b → excl_shared >= 2.0.0 < 3.0.0
+  // 교집합 없음 → ResolutionConflict
+  let config =
+    test_config([
+      Dependency(
+        name: "excl_a",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+      Dependency(
+        name: "excl_b",
+        version_constraint: ">= 1.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+        package_name: Error(Nil),
+      ),
+    ])
+  let assert Error(resolver.ResolutionConflict(_, _)) =
+    resolver.resolve_with(config, Error(Nil), mock_fetch)
 }
