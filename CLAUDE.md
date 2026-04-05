@@ -41,6 +41,9 @@ kir.toml은 존재하지 않는다.
 20. 구조화된 로깅 — --verbose/--debug 플래그, persistent_term 기반 4단계 로그 (Silent/Normal/Verbose/Debug), KIR_LOG 환경변수, lazy 메시지 평가
 21. lockfile 버전 마이그레이션 — lock_version 상수(현재 2), 순차 마이그레이션 체인, 미래 버전 거부, frozen 모드 검증
 22. engines 필드 — gleam.toml [engines] 섹션, Gleam/Erlang/Node.js 런타임 버전 감지 + semver 제약 검증, install 전 검사
+23. 다운로드 파이프라인 설정 — DownloadConfig 타입, [security] max-retries/timeout/parallel/backoff, CLI 플래그 오버라이드, 배치 단위 병렬화
+24. 선택적 store 정리 — kir clean --store에 --dry-run/--only/--keep/--max-age, 이름 기반 GC 필터링, lockfile SHA256→name 매핑
+25. Git merge conflict 자동 해결 — kir lock resolve, merge marker 감지/제거, gleam.toml에서 재해결, diff 출력
 
 ## 명령어
 

@@ -45,6 +45,7 @@ pub fn run_skips_cached_packages_test() {
       security,
       progress.Inactive,
       False,
+      types.default_download_config(),
     )
   assert list.length(result.packages) == 1
   let assert [p] = result.packages
@@ -68,6 +69,7 @@ pub fn run_empty_packages_test() {
       security,
       progress.Inactive,
       False,
+      types.default_download_config(),
     )
   assert result.packages == []
   let _ = simplifile.delete(test_project_dir())

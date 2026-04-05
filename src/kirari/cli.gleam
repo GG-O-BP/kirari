@@ -1,12 +1,14 @@
 //// CLI 오케스트레이터 — glint 기반 명령어 등록 및 디스패치
 
 import gleam/io
+import gleam/list
 import gleam/result
 import gleam/string
 import glint
 import kirari/audit
 import kirari/cli/error
 import kirari/cli/install
+import kirari/cli/lock_resolve
 import kirari/cli/log
 import kirari/cli/output
 import kirari/cli/query
@@ -73,6 +75,7 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["outdated"], do: outdated_cmd())
   |> glint.add(at: ["why"], do: why_cmd())
   |> glint.add(at: ["clean"], do: clean_cmd())
+  |> glint.add(at: ["lock", "resolve"], do: lock_resolve_cmd())
   |> glint.add(at: ["diff"], do: diff_cmd())
   |> glint.add(at: ["ls"], do: ls_cmd())
   |> glint.add(at: ["doctor"], do: doctor_cmd())
@@ -405,10 +408,63 @@ fn clean_cmd() -> glint.Command(Nil) {
     |> glint.flag_default(False)
     |> glint.flag_help("Keep Gleam compilation cache (_gleam_artefacts)"),
   )
+  use dry_run_flag <- glint.flag(
+    glint.bool_flag("dry-run")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Show what would be removed without deleting"),
+  )
+  use only_flag <- glint.flag(
+    glint.string_flag("only")
+    |> glint.flag_default("")
+    |> glint.flag_help("Remove only these packages (comma-separated names)"),
+  )
+  use keep_flag <- glint.flag(
+    glint.string_flag("keep")
+    |> glint.flag_default("")
+    |> glint.flag_help("Preserve these packages (comma-separated names)"),
+  )
+  use max_age_flag <- glint.flag(
+    glint.int_flag("max-age")
+    |> glint.flag_default(0)
+    |> glint.flag_help("Override retention days (0 = use defaults)"),
+  )
   glint.command(fn(_named, _args, flags) {
     let clean_store = store_flag(flags) |> result.unwrap(False)
     let keep_cache = keep_cache_flag(flags) |> result.unwrap(False)
-    install.do_clean(".", clean_store, keep_cache)
+    let dry_run = dry_run_flag(flags) |> result.unwrap(False)
+    let only = parse_comma_list(only_flag(flags) |> result.unwrap(""))
+    let keep = parse_comma_list(keep_flag(flags) |> result.unwrap(""))
+    let max_age = max_age_flag(flags) |> result.unwrap(0)
+    install.do_clean(".", clean_store, keep_cache, dry_run, only, keep, max_age)
+  })
+}
+
+fn parse_comma_list(s: String) -> List(String) {
+  case s {
+    "" -> []
+    _ ->
+      string.split(s, ",")
+      |> list.map(string.trim)
+      |> list.filter(fn(x) { x != "" })
+  }
+}
+
+fn lock_resolve_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help(
+    "Re-resolve kir.lock from gleam.toml (fixes git merge conflicts)",
+  )
+  use dry_run_flag <- glint.flag(
+    glint.bool_flag("dry-run")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Show what would change without writing"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    log.init(log.determine_level_from_env())
+    let dry_run = dry_run_flag(flags) |> result.unwrap(False)
+    case lock_resolve.do_lock_resolve(".", dry_run) {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
   })
 }
 

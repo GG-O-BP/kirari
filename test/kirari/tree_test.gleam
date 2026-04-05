@@ -48,6 +48,7 @@ fn test_config() -> KirConfig {
     path_dev_deps: [],
     overrides: [],
     engines: types.default_engines_config(),
+    download: types.default_download_config(),
   )
 }
 
@@ -155,6 +156,7 @@ pub fn empty_tree_test() {
       path_dev_deps: [],
       overrides: [],
       engines: types.default_engines_config(),
+      download: types.default_download_config(),
     )
   let roots =
     tree.build(

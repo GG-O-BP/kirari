@@ -85,6 +85,7 @@ fn decode_gleam_toml(doc: Dict(String, Toml)) -> Result(KirConfig, MigrateError)
     path_dev_deps: path_dev_deps,
     overrides: [],
     engines: types.default_engines_config(),
+    download: types.default_download_config(),
   ))
 }
 

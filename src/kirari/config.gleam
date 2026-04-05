@@ -3,6 +3,7 @@
 //// kirari 확장 섹션([npm-dependencies], [dev-npm-dependencies], [security])을 통합 관리
 
 import gleam/dict.{type Dict}
+import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
@@ -70,6 +71,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
   let security = decode_security_section(doc)
   let overrides = decode_overrides(doc)
   let engines = decode_engines_section(doc)
+  let download = decode_download_config(doc)
   Ok(KirConfig(
     package: package,
     hex_deps: hex_deps,
@@ -81,6 +83,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     path_dev_deps: path_dev_deps,
     overrides: overrides,
     engines: engines,
+    download: download,
   ))
 }
 
@@ -302,7 +305,7 @@ pub fn encode_config(config: KirConfig) -> String {
     encode_dep_section("dev-npm-dependencies", config.npm_dev_deps, []),
     encode_override_section("overrides", config.overrides, Hex),
     encode_override_section("npm-overrides", config.overrides, Npm),
-    encode_security_section(config.security),
+    encode_security_section(config.security, config.download),
     encode_engines_section(config.engines),
   ]
   |> list.filter(fn(s) { s != "" })
@@ -405,7 +408,10 @@ fn encode_override_section(
   }
 }
 
-fn encode_security_section(sec: SecurityConfig) -> String {
+fn encode_security_section(
+  sec: SecurityConfig,
+  dl: types.DownloadConfig,
+) -> String {
   let lines = []
   let lines = case sec.exclude_newer {
     Ok(ts) -> ["exclude-newer = " <> quote(ts), ..lines]
@@ -449,6 +455,8 @@ fn encode_security_section(sec: SecurityConfig) -> String {
       ["audit-ignore = [" <> quoted <> "]", ..lines]
     }
   }
+  // 다운로드 설정 (기본값 아닌 필드만)
+  let lines = list.append(encode_download_lines(dl), lines)
   case lines {
     [] -> ""
     _ -> "[security]\n" <> string.join(list.reverse(lines), "\n") <> "\n"
@@ -488,6 +496,44 @@ fn encode_engines_section(engines: types.EnginesConfig) -> String {
     [] -> ""
     _ -> "[engines]\n" <> string.join(list.reverse(lines), "\n") <> "\n"
   }
+}
+
+/// [security] 섹션에서 다운로드 설정 디코딩
+fn decode_download_config(doc: Dict(String, Toml)) -> types.DownloadConfig {
+  let max_retries =
+    tom.get_int(doc, ["security", "max-retries"]) |> result.unwrap(3)
+  let timeout_sec =
+    tom.get_int(doc, ["security", "timeout"]) |> result.unwrap(120)
+  let parallel = tom.get_int(doc, ["security", "parallel"]) |> result.unwrap(0)
+  let backoff = tom.get_int(doc, ["security", "backoff"]) |> result.unwrap(2000)
+  types.DownloadConfig(
+    max_retries: max_retries,
+    timeout_ms: timeout_sec * 1000,
+    parallel: parallel,
+    backoff_ms: backoff,
+  )
+}
+
+/// 다운로드 설정 인코딩 — [security] 섹션에 기본값이 아닌 필드만 추가
+fn encode_download_lines(dl: types.DownloadConfig) -> List(String) {
+  let lines = []
+  let lines = case dl.max_retries != 3 {
+    True -> ["max-retries = " <> int.to_string(dl.max_retries), ..lines]
+    False -> lines
+  }
+  let lines = case dl.timeout_ms != 120_000 {
+    True -> ["timeout = " <> int.to_string(dl.timeout_ms / 1000), ..lines]
+    False -> lines
+  }
+  let lines = case dl.parallel != 0 {
+    True -> ["parallel = " <> int.to_string(dl.parallel), ..lines]
+    False -> lines
+  }
+  let lines = case dl.backoff_ms != 2000 {
+    True -> ["backoff = " <> int.to_string(dl.backoff_ms), ..lines]
+    False -> lines
+  }
+  lines
 }
 
 /// TOML 키 — 특수문자 포함 시 인용

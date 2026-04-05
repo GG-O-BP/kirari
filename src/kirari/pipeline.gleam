@@ -3,6 +3,7 @@
 import gleam/bit_array
 import gleam/dict
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
@@ -57,6 +58,7 @@ pub fn run(
   security: SecurityConfig,
   progress: ProgressHandle,
   offline: Bool,
+  download_config: types.DownloadConfig,
 ) -> Result(PipelineResult, PipelineError) {
   // offline: store에 없는 패키지가 있으면 즉시 실패
   use _ <- result.try(check_offline_packages(resolve_result.packages, offline))
@@ -77,6 +79,7 @@ pub fn run(
     resolve_result.packages,
     ctx,
     progress,
+    download_config,
   ))
   let updated = list.map(download_results, fn(dr) { dr.package })
   let bin_map =
@@ -234,6 +237,7 @@ fn download_and_store_all(
   packages: List(ResolvedPackage),
   ctx: DownloadContext,
   prog: ProgressHandle,
+  dl_config: types.DownloadConfig,
 ) -> Result(List(DownloadResult), PipelineError) {
   // 이미 store에 있는 패키지와 다운로드 필요한 패키지 분리
   let #(cached, to_download) =
@@ -256,7 +260,12 @@ fn download_and_store_all(
       DownloadResult(package: pkg, bin: [], bytes_downloaded: 0)
     })
   // 병렬 다운로드
-  use downloaded <- result.try(download_parallel(to_download, ctx, prog))
+  use downloaded <- result.try(download_parallel(
+    to_download,
+    ctx,
+    prog,
+    dl_config,
+  ))
   Ok(
     list.append(cached_results, downloaded)
     |> list.sort(fn(a, b) { types.compare_packages(a.package, b.package) }),
@@ -267,19 +276,41 @@ fn download_parallel(
   packages: List(ResolvedPackage),
   ctx: DownloadContext,
   prog: ProgressHandle,
+  dl_config: types.DownloadConfig,
 ) -> Result(List(DownloadResult), PipelineError) {
   case packages {
     [] -> Ok([])
     _ -> {
+      let batch_size = case dl_config.parallel {
+        0 -> list.length(packages)
+        n -> n
+      }
+      let batches = list_chunk(packages, batch_size)
+      download_batches(batches, ctx, prog, dl_config, [])
+    }
+  }
+}
+
+/// 배치 단위 병렬 다운로드 — 각 배치 완료 후 다음 배치 시작
+fn download_batches(
+  batches: List(List(ResolvedPackage)),
+  ctx: DownloadContext,
+  prog: ProgressHandle,
+  dl_config: types.DownloadConfig,
+  acc: List(DownloadResult),
+) -> Result(List(DownloadResult), PipelineError) {
+  case batches {
+    [] -> Ok(acc)
+    [batch, ..rest] -> {
       let subject = process.new_subject()
-      let count = list.length(packages)
-      list.each(packages, fn(pkg) {
+      let count = list.length(batch)
+      list.each(batch, fn(pkg) {
         process.spawn(fn() {
           progress.send(
             prog,
             progress.Started(name: pkg.name, version: pkg.version),
           )
-          let result = download_and_store_one(pkg, ctx)
+          let result = download_and_store_one(pkg, ctx, dl_config)
           case result {
             Ok(dr) ->
               progress.send(
@@ -299,7 +330,19 @@ fn download_parallel(
           process.send(subject, result)
         })
       })
-      collect_results(subject, count, [])
+      use batch_results <- result.try(collect_results(
+        subject,
+        count,
+        [],
+        dl_config.timeout_ms,
+      ))
+      download_batches(
+        rest,
+        ctx,
+        prog,
+        dl_config,
+        list.append(acc, batch_results),
+      )
     }
   }
 }
@@ -308,14 +351,21 @@ fn collect_results(
   subject: process.Subject(Result(DownloadResult, PipelineError)),
   remaining: Int,
   acc: List(DownloadResult),
+  timeout_ms: Int,
 ) -> Result(List(DownloadResult), PipelineError) {
   case remaining {
     0 -> Ok(acc)
     _ ->
-      case process.receive(subject, 120_000) {
-        Ok(Ok(dr)) -> collect_results(subject, remaining - 1, [dr, ..acc])
+      case process.receive(subject, timeout_ms) {
+        Ok(Ok(dr)) ->
+          collect_results(subject, remaining - 1, [dr, ..acc], timeout_ms)
         Ok(Error(e)) -> Error(e)
-        Error(_) -> Error(DownloadError("", "", "download timeout (120s)"))
+        Error(_) ->
+          Error(DownloadError(
+            "",
+            "",
+            "download timeout (" <> int.to_string(timeout_ms / 1000) <> "s)",
+          ))
       }
   }
 }
@@ -323,6 +373,7 @@ fn collect_results(
 fn download_and_store_one(
   pkg: ResolvedPackage,
   ctx: DownloadContext,
+  dl_config: types.DownloadConfig,
 ) -> Result(DownloadResult, PipelineError) {
   // 이미 store에 있으면 skip
   let already_stored = case pkg.sha256 {
@@ -343,8 +394,13 @@ fn download_and_store_one(
         Error(_) -> ""
       }
       let tarball_url = resolve_tarball_url(pkg, tarball_url)
-      // 다운로드 (3회 재시도)
-      use #(data, sha256) <- result.try(download_with_retry(pkg, tarball_url, 3))
+      // 다운로드 (설정 가능한 재시도)
+      use #(data, sha256) <- result.try(download_with_retry(
+        pkg,
+        tarball_url,
+        dl_config.max_retries,
+        dl_config.backoff_ms,
+      ))
       let data_size = bit_array.byte_size(data)
       // npm Sigstore 서명 검증 (다운로드 후, store 전)
       use _ <- result.try(verify_provenance_if_npm(pkg, data, ctx))
@@ -452,14 +508,15 @@ fn download_with_retry(
   pkg: ResolvedPackage,
   tarball_url: String,
   attempts: Int,
+  backoff_ms: Int,
 ) -> Result(#(BitArray, String), PipelineError) {
   case download_tarball(pkg, tarball_url) {
     Ok(result) -> Ok(result)
     Error(e) ->
       case attempts > 1 {
         True -> {
-          process.sleep(2000)
-          download_with_retry(pkg, tarball_url, attempts - 1)
+          process.sleep(backoff_ms)
+          download_with_retry(pkg, tarball_url, attempts - 1, backoff_ms)
         }
         False -> Error(e)
       }
@@ -481,5 +538,21 @@ fn download_tarball(
       |> result.map_error(fn(e) {
         DownloadError(pkg.name, pkg.version, string.inspect(e))
       })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 유틸리티
+// ---------------------------------------------------------------------------
+
+/// 리스트를 최대 size 크기의 배치로 분할
+fn list_chunk(items: List(a), size: Int) -> List(List(a)) {
+  case items {
+    [] -> []
+    _ -> {
+      let batch = list.take(items, size)
+      let rest = list.drop(items, size)
+      [batch, ..list_chunk(rest, size)]
+    }
   }
 }

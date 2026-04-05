@@ -170,7 +170,14 @@ pub fn do_install(
           )
           let prog = make_progress(list.length(resolve_result.packages))
           use pipeline_result <- result.try(
-            pipeline.run(resolve_result, dir, cfg.security, prog, offline)
+            pipeline.run(
+              resolve_result,
+              dir,
+              cfg.security,
+              prog,
+              offline,
+              cfg.download,
+            )
             |> result.map_error(PipelineErr),
           )
           progress.stop(prog)
@@ -248,6 +255,7 @@ pub fn do_install_quiet(dir: String) -> Result(Nil, KirError) {
           cfg.security,
           progress.Inactive,
           False,
+          cfg.download,
         )
         |> result.map_error(PipelineErr),
       )
@@ -352,7 +360,7 @@ pub fn do_update(dir: String) -> Result(Nil, KirError) {
   )
   let prog = make_progress(list.length(resolve_result.packages))
   use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security, prog, False)
+    pipeline.run(resolve_result, dir, cfg.security, prog, False, cfg.download)
     |> result.map_error(PipelineErr),
   )
   progress.stop(prog)
@@ -401,7 +409,7 @@ pub fn do_update_selective(
   )
   let prog = make_progress(list.length(resolve_result.packages))
   use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security, prog, False)
+    pipeline.run(resolve_result, dir, cfg.security, prog, False, cfg.download)
     |> result.map_error(PipelineErr),
   )
   progress.stop(prog)
@@ -695,7 +703,7 @@ pub fn do_deps_download(dir: String) -> Result(Nil, KirError) {
   )
   let prog = make_progress(list.length(resolve_result.packages))
   use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security, prog, False)
+    pipeline.run(resolve_result, dir, cfg.security, prog, False, cfg.download)
     |> result.map_error(PipelineErr),
   )
   progress.stop(prog)
@@ -716,35 +724,68 @@ pub fn do_deps_download(dir: String) -> Result(Nil, KirError) {
   Ok(Nil)
 }
 
-pub fn do_clean(dir: String, clean_store: Bool, keep_cache: Bool) -> Nil {
-  case keep_cache {
+pub fn do_clean(
+  dir: String,
+  clean_store: Bool,
+  keep_cache: Bool,
+  dry_run: Bool,
+  only: List(String),
+  keep: List(String),
+  max_age_override: Int,
+) -> Nil {
+  case dry_run {
+    True ->
+      io.println(output.color_dim("(dry run) Would clean build artifacts"))
     False -> {
-      let _ = simplifile.delete(dir <> "/build/dev")
-      let _ = simplifile.delete(dir <> "/build/packages")
-      Nil
-    }
-    True -> {
-      let _ = simplifile.delete(dir <> "/build/packages")
-      Nil
+      case keep_cache {
+        False -> {
+          let _ = simplifile.delete(dir <> "/build/dev")
+          let _ = simplifile.delete(dir <> "/build/packages")
+          Nil
+        }
+        True -> {
+          let _ = simplifile.delete(dir <> "/build/packages")
+          Nil
+        }
+      }
+      let _ = simplifile.delete(dir <> "/node_modules")
+      let _ = cache.invalidate_all()
+      io.println(output.color_green("Cleaned") <> " build artifacts")
     }
   }
-  let _ = simplifile.delete(dir <> "/node_modules")
-  let _ = cache.invalidate_all()
-  io.println(output.color_green("Cleaned") <> " build artifacts")
   case clean_store {
-    True ->
-      case gc.gc_all() {
-        Ok(#(hex_result, npm_result)) ->
-          io.println(
-            output.color_green("Store GC:")
-            <> " removed "
-            <> int.to_string(hex_result.removed_count)
-            <> " hex, "
-            <> int.to_string(npm_result.removed_count)
-            <> " npm packages",
-          )
-        Error(_) -> io.println("Store GC failed")
+    True -> {
+      let has_filters =
+        only != [] || keep != [] || dry_run || max_age_override > 0
+      case has_filters {
+        True -> {
+          // 선택적 GC — lockfile에서 이름 매핑 구축
+          let name_map = build_name_map(dir)
+          let npm_age = case max_age_override {
+            0 -> 90
+            n -> n
+          }
+          let policy =
+            gc.GcPolicy(
+              max_age_days: npm_age,
+              only: only,
+              keep: keep,
+              dry_run: dry_run,
+            )
+          case gc.gc_selective(policy, name_map) {
+            Ok(#(hex_result, npm_result)) ->
+              print_gc_results(hex_result, npm_result, dry_run)
+            Error(_) -> io.println("Store GC failed")
+          }
+        }
+        False ->
+          case gc.gc_all() {
+            Ok(#(hex_result, npm_result)) ->
+              print_gc_results(hex_result, npm_result, False)
+            Error(_) -> io.println("Store GC failed")
+          }
       }
+    }
     False -> Nil
   }
 }
@@ -788,7 +829,7 @@ fn do_install_from_lock_verbose(
   let resolve_result = resolver.resolve_result_from_lock(lock)
   let prog = make_progress(list.length(lock.packages))
   use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security, prog, False)
+    pipeline.run(resolve_result, dir, cfg.security, prog, False, cfg.download)
     |> result.map_error(PipelineErr),
   )
   progress.stop(prog)
@@ -819,7 +860,14 @@ fn do_install_from_lock(
 ) -> Result(Nil, KirError) {
   let resolve_result = resolver.resolve_result_from_lock(lock)
   use pipeline_result <- result.try(
-    pipeline.run(resolve_result, dir, cfg.security, progress.Inactive, False)
+    pipeline.run(
+      resolve_result,
+      dir,
+      cfg.security,
+      progress.Inactive,
+      False,
+      cfg.download,
+    )
     |> result.map_error(PipelineErr),
   )
   let fp = fingerprint.compute(cfg)
@@ -1017,6 +1065,47 @@ fn validate_engines(
     }
     engines.ConstraintViolation(violations) -> Error(EnginesErr(violations))
   }
+}
+
+fn build_name_map(dir: String) -> dict.Dict(String, #(String, String)) {
+  case lockfile.read(dir) {
+    Ok(lock) ->
+      list.fold(lock.packages, dict.new(), fn(acc, pkg) {
+        dict.insert(acc, pkg.sha256, #(pkg.name, pkg.version))
+      })
+    Error(_) -> dict.new()
+  }
+}
+
+fn print_gc_results(
+  hex_result: gc.GcResult,
+  npm_result: gc.GcResult,
+  dry_run: Bool,
+) -> Nil {
+  let prefix = case dry_run {
+    True -> output.color_dim("(dry run) Would remove")
+    False -> output.color_green("Store GC:") <> " removed"
+  }
+  // dry_run이면 개별 항목 출력
+  case dry_run {
+    True -> {
+      list.each(hex_result.removed_packages, fn(e) {
+        io.println("  " <> e.name <> "@" <> e.version <> " (hex)")
+      })
+      list.each(npm_result.removed_packages, fn(e) {
+        io.println("  " <> e.name <> "@" <> e.version <> " (npm)")
+      })
+    }
+    False -> Nil
+  }
+  io.println(
+    prefix
+    <> " "
+    <> int.to_string(hex_result.removed_count)
+    <> " hex, "
+    <> int.to_string(npm_result.removed_count)
+    <> " npm packages",
+  )
 }
 
 fn detect_registry(name: String) -> types.Registry {

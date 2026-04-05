@@ -10,13 +10,13 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Registry-specific store** — Hex and npm packages stored separately under `~/.kir/store/hex/` and `~/.kir/store/npm/` with optimized strategies per ecosystem
 - **Content-addressable store** — SHA256-based with hardlink installs (copy fallback for npm packages with install scripts)
 - **npm metadata sidecar** — `.meta` JSON files track scripts, bin entries, platform constraints, and provenance
-- **Parallel downloads** — concurrent dependency fetching with automatic retry, progress bar with download speed
+- **Parallel downloads** — concurrent dependency fetching with configurable retry (`--max-retries`), timeout (`--timeout`), parallelism (`--parallel`), and backoff; settings in `[security]` section or CLI flags
 - **Deterministic lockfile** — same input always produces the same `kir.lock`, with platform-aware fields
 - **Supply chain security** — `--exclude-newer`, SHA256 hash verification, Hex tarball CHECKSUM verification, npm SRI integrity verification, npm Sigstore ECDSA signature verification with registry key caching
 - **npm script policy** — configurable `npm-scripts` policy (deny/allow/allowlist) to block untrusted install scripts
 - **Platform-aware resolution** — respects npm `os` and `cpu` fields, filters incompatible packages during resolution, warns on install-time platform mismatch
 - **Bin executables** — auto-creates `node_modules/.bin/` symlinks (Unix) or `.cmd` wrappers (Windows)
-- **Store GC** — `kir clean --store` with immutability-aware retention (Hex: never expires, npm: 90 days); customizable store path via `KIR_STORE` env var
+- **Store GC** — `kir clean --store` with immutability-aware retention (Hex: never expires, npm: 90 days); selective cleanup with `--only=pkg`, `--keep=pkg`, `--max-age=N`, `--dry-run`; customizable store path via `KIR_STORE` env var
 - **Package integrity manifests** — `.kir-manifest` file generated per package at store time, recording SHA256 of every file; `kir store verify` re-hashes all files to detect corruption, tampering, or missing files (Level 3 full / Level 2 `--quick`)
 - **License compliance** — SPDX 2.3 expression parser, per-dependency license auditing with allow/deny policy, `kir license` command
 - **Vulnerability audit** — `kir audit` checks installed packages against GitHub Advisory Database (Hex/Erlang) and npm bulk advisory API, with severity filtering, `--json` output for CI, and configurable ignore list
@@ -39,6 +39,7 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Verbose/debug logging** — `--verbose` shows detailed progress (resolution decisions, fingerprint comparisons, lockfile writes); `--debug` adds internal traces; `KIR_LOG` env var as alternative; 4-level system (Silent/Normal/Verbose/Debug) backed by Erlang `persistent_term`
 - **Lockfile version migration** — automatic schema migration on read (v1 → v2 → ...); rejects future versions with clear upgrade message; `--frozen` mode blocks migration to preserve CI reproducibility
 - **Engine constraints** — `[engines]` section in `gleam.toml` declares required Gleam, Erlang/OTP, and Node.js versions; `kir install` validates before resolution and fails with clear mismatch messages; `kir doctor` shows constraint status
+- **Lock conflict resolution** — `kir lock resolve` automatically detects git merge conflict markers in `kir.lock`, re-resolves from `gleam.toml`, and writes a clean lockfile with diff preview; supports `--dry-run`
 - **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
 - **`gleam build` compatible** — gleam ignores kirari sections; auto-generates `manifest.toml` + `packages.toml`
 
@@ -113,14 +114,14 @@ gleam build
 | Command | Description |
 |---------|-------------|
 | `kir init` | Add kirari sections to `gleam.toml`, merge `package.json` npm deps |
-| `kir install [--frozen] [--exclude-newer=<TS>] [--offline] [--quiet] [--verify] [--verbose] [--debug]` | Resolve and install dependencies, generate `kir.lock` |
+| `kir install [--frozen] [--exclude-newer=<TS>] [--offline] [--quiet] [--verify] [--verbose] [--debug] [--max-retries=<N>] [--timeout=<S>] [--parallel=<N>]` | Resolve and install dependencies, generate `kir.lock` |
 | `kir update [pkg...]` | Update all or specific dependencies to latest compatible versions |
 | `kir add <pkg[@version]> [--npm] [--dev]` | Add a dependency and install (`kir add gleam_json@3`, `kir add @types/node --npm`, `kir add express@latest --npm`) |
 | `kir remove <pkg> [--npm]` | Remove a dependency and reinstall |
 | `kir deps list [--json]` | List all dependencies with versions and registries |
 | `kir deps download` | Download dependencies without installing |
 | `kir tree [--json]` | Print the full dependency tree with transitive dependencies |
-| `kir clean [--store] [--keep-cache]` | Remove `build/` and `node_modules/`; `--store` runs store GC; `--keep-cache` preserves Gleam compilation cache |
+| `kir clean [--store] [--keep-cache] [--dry-run] [--only=<pkgs>] [--keep=<pkgs>] [--max-age=<N>]` | Remove `build/` and `node_modules/`; `--store` runs store GC with optional selective filtering |
 
 ### Inspection
 
@@ -134,6 +135,7 @@ gleam build
 | `kir store verify [--quick] [--json]` | Verify cached package integrity (full SHA256 re-hash or `--quick` file count check) |
 | `kir license [--json]` | Audit dependency licenses against allow/deny policy |
 | `kir audit [--json] [--severity=<LEVEL>]` | Audit dependencies for known vulnerabilities (GHSA + npm advisory) |
+| `kir lock resolve [--dry-run]` | Re-resolve `kir.lock` from `gleam.toml` (fixes git merge conflicts) |
 
 ### Build & Run
 
@@ -221,6 +223,12 @@ kir completion fish | source
 - `--quick` — Fast integrity check: manifest exists + file count only, skip SHA256 re-hash (for `store verify`).
 - `--verbose` — Show detailed progress: resolution decisions, fingerprint comparisons, pipeline stats (for `install`). Also via `KIR_LOG=verbose` env var.
 - `--debug` — Show internal debug traces in addition to verbose output (for `install`). Also via `KIR_LOG=debug` env var.
+- `--max-retries=<N>` — Maximum download retry attempts, overrides `[security] max-retries` (for `install`).
+- `--timeout=<SECONDS>` — Per-package download timeout in seconds, overrides `[security] timeout` (for `install`).
+- `--parallel=<N>` — Maximum concurrent downloads (0 = unbounded), overrides `[security] parallel` (for `install`).
+- `--only=<PACKAGES>` — Comma-separated package names to target for store GC (for `clean --store`).
+- `--keep=<PACKAGES>` — Comma-separated package names to preserve during store GC (for `clean --store`).
+- `--max-age=<DAYS>` — Override retention days for store GC (for `clean --store`).
 
 ## gleam.toml
 
@@ -261,6 +269,9 @@ npm-scripts-allow = ["esbuild", "sharp"]
 provenance = "warn"
 license-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC"]
 audit-ignore = ["GHSA-xxxx-xxxx-xxxx"]
+max-retries = 5
+timeout = 300
+parallel = 4
 
 [engines]
 gleam = ">= 1.0.0"
@@ -321,6 +332,10 @@ Resolving dependencies...
 | `license-allow` | string array | `[]` | Allowlist of SPDX license IDs — `kir license` reports violations for packages not matching |
 | `license-deny` | string array | `[]` | Denylist of SPDX license IDs — `kir license` reports violations for packages matching |
 | `audit-ignore` | string array | `[]` | Advisory IDs (GHSA/CVE) to suppress in `kir audit` results |
+| `max-retries` | integer | `3` | Maximum download retry attempts per package |
+| `timeout` | integer (seconds) | `120` | Per-package download timeout |
+| `parallel` | integer | `0` (unbounded) | Maximum concurrent downloads (0 = no limit) |
+| `backoff` | integer (ms) | `2000` | Delay between retry attempts |
 
 ### Engine constraints
 
@@ -417,7 +432,7 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Provenance verification** | Not available | npm Sigstore ECDSA signature verification with registry key caching (warn/require/ignore) |
 | **SRI integrity** | Not available | Verifies npm `dist.integrity` field (sha256/sha512) |
 | **Hex tarball verification** | `outer_checksum` (SHA256 of entire tarball) | `outer_checksum` + inner `CHECKSUM` file (SHA256 of VERSION+metadata+contents) |
-| **Store GC** | Not available | `kir clean --store` — Hex immutable (never expires), npm 90-day retention |
+| **Store GC** | Not available | `kir clean --store` — selective by package name, `--dry-run` preview, `--max-age` override |
 | **Dependency tree** | `gleam deps tree` | `kir tree` (full transitive tree with cycle detection) |
 | **License compliance** | Not available | SPDX 2.3 expression parsing, allow/deny policy, `kir license` audit |
 | **Deprecation warnings** | Not available | Hex retirement and npm deprecation warnings during install |
@@ -444,6 +459,9 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Verbose/debug output** | Not available | `--verbose`/`--debug` flags + `KIR_LOG` env var, 4-level structured logging |
 | **Lockfile migration** | Not available | Automatic schema migration (v1 → v2 → ...), future version rejection |
 | **Engine constraints** | Not available | `[engines]` section: Gleam/Erlang/Node.js version validation before install |
+| **Download configuration** | Not available | `[security] max-retries`/`timeout`/`parallel`/`backoff` + CLI flag overrides |
+| **Lock conflict resolution** | Not available | `kir lock resolve` detects merge markers, re-resolves from gleam.toml, writes clean lockfile |
+| **Selective store cleanup** | Not available | `kir clean --store --only=pkg --keep=pkg --dry-run --max-age=N` |
 | **Written in** | Rust | Gleam |
 
 ## Architecture
@@ -460,6 +478,7 @@ src/kirari/
     progress.gleam        Download progress actor (Erlang process, package-level bar + speed)
     log.gleam             Structured logging (4-level, persistent_term, KIR_LOG env, lazy eval)
     engines.gleam         Engine constraint validation (Gleam/Erlang/Node.js version checks)
+    lock_resolve.gleam    Git merge conflict resolution for kir.lock (re-resolve + diff)
   types.gleam             Shared domain types
   config.gleam            gleam.toml parsing/serialization (native + kirari sections)
   migrate.gleam           package.json migration for kir init
@@ -491,7 +510,7 @@ src/kirari/
     hex.gleam             Hex-specific CAS store (~/.kir/store/hex/)
     npm.gleam             npm-specific CAS store (~/.kir/store/npm/) + metadata sidecar
     metadata.gleam        npm .meta JSON sidecar read/write
-    gc.gleam              Store GC (Hex: immutable/never expires, npm: 90-day retention)
+    gc.gleam              Store GC (Hex: immutable/never expires, npm: 90-day retention, selective by name)
     manifest.gleam        Package integrity manifest — per-file SHA256 generation and verification
   tarball.gleam           Hex double-tar + CHECKSUM verification, npm tgz extraction
   installer.gleam         Registry-aware installation (hardlink/copy) + bin symlinks/cmd wrappers

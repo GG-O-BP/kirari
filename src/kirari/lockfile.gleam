@@ -362,6 +362,23 @@ pub fn diff(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Git merge conflict 감지
+// ---------------------------------------------------------------------------
+
+/// kir.lock 내용에 git merge conflict marker가 있는지 확인
+pub fn has_merge_conflicts(content: String) -> Bool {
+  string.contains(content, "<<<<<<< ") || string.contains(content, ">>>>>>> ")
+}
+
+/// merge conflict marker 이전의 유효한 내용만 추출
+pub fn strip_conflict_markers(content: String) -> String {
+  case string.split_once(content, "<<<<<<< ") {
+    Ok(#(before, _)) -> before
+    Error(_) -> content
+  }
+}
+
 fn describe_diff(old: KirLock, new: KirLock) -> String {
   let old_names =
     list.map(old.packages, fn(p) {

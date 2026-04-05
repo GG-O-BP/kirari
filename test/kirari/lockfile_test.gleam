@@ -263,3 +263,31 @@ pub fn encode_uses_current_version_test() {
   let encoded = lockfile.encode(lock)
   assert string.contains(encoded, "version = 2")
 }
+
+// ---------------------------------------------------------------------------
+// merge conflict 감지
+// ---------------------------------------------------------------------------
+
+pub fn has_merge_conflicts_detects_markers_test() {
+  let content =
+    "version = 2\n<<<<<<< HEAD\nconfig-fingerprint = \"abc\"\n=======\nconfig-fingerprint = \"def\"\n>>>>>>> feature\n"
+  assert lockfile.has_merge_conflicts(content) == True
+}
+
+pub fn has_merge_conflicts_clean_file_test() {
+  let content = "version = 2\nconfig-fingerprint = \"abc\"\n"
+  assert lockfile.has_merge_conflicts(content) == False
+}
+
+pub fn strip_conflict_markers_extracts_before_test() {
+  let content =
+    "version = 2\n<<<<<<< HEAD\nstuff\n=======\nother\n>>>>>>> branch\n"
+  let stripped = lockfile.strip_conflict_markers(content)
+  assert string.contains(stripped, "version = 2")
+  assert !string.contains(stripped, "<<<<<<<")
+}
+
+pub fn strip_conflict_markers_no_markers_test() {
+  let content = "version = 2\nclean content\n"
+  assert lockfile.strip_conflict_markers(content) == content
+}

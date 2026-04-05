@@ -139,6 +139,34 @@ pub fn default_security_config() -> SecurityConfig {
 }
 
 // ---------------------------------------------------------------------------
+// DownloadConfig (다운로드 파이프라인 설정)
+// ---------------------------------------------------------------------------
+
+/// 다운로드 파이프라인 설정
+pub type DownloadConfig {
+  DownloadConfig(
+    /// 최대 재시도 횟수 (기본 3)
+    max_retries: Int,
+    /// 패키지당 타임아웃 밀리초 (기본 120_000)
+    timeout_ms: Int,
+    /// 최대 병렬 다운로드 수 (0 = 무제한, 기본 0)
+    parallel: Int,
+    /// 재시도 간 백오프 밀리초 (기본 2000)
+    backoff_ms: Int,
+  )
+}
+
+/// 기본 다운로드 설정
+pub fn default_download_config() -> DownloadConfig {
+  DownloadConfig(
+    max_retries: 3,
+    timeout_ms: 120_000,
+    parallel: 0,
+    backoff_ms: 2000,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // PackageInfo ([package] 섹션)
 // ---------------------------------------------------------------------------
 
@@ -189,6 +217,7 @@ pub type KirConfig {
     path_dev_deps: List(PathDep),
     overrides: List(Override),
     engines: EnginesConfig,
+    download: DownloadConfig,
   )
 }
 
