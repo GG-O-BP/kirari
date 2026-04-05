@@ -4,6 +4,7 @@ import gleam/result
 import kirari/platform
 import kirari/security
 import kirari/store/cas
+import kirari/store/manifest
 import kirari/store/types as store_types
 import kirari/tarball
 import kirari/types
@@ -91,7 +92,8 @@ pub fn store_package(
 
       // 5. 원자적 rename
       case platform.atomic_rename(tmp_dir, final_path) {
-        Ok(_) ->
+        Ok(_) -> {
+          let _ = manifest.generate(final_path)
           Ok(
             store_types.StoreResult(
               path: final_path,
@@ -99,6 +101,7 @@ pub fn store_package(
               bin: [],
             ),
           )
+        }
         Error(_) -> {
           let _ = simplifile.delete(tmp_dir)
           case simplifile.is_directory(final_path) {

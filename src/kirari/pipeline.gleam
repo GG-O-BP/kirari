@@ -1,10 +1,12 @@
 //// 설치 파이프라인 — 다운로드 → 저장 → 설치 오케스트레이션
 
+import gleam/bit_array
 import gleam/dict
 import gleam/erlang/process
 import gleam/list
 import gleam/result
 import gleam/string
+import kirari/cli/progress.{type ProgressHandle}
 import kirari/installer
 import kirari/registry/hex
 import kirari/registry/npm
@@ -21,6 +23,7 @@ pub type PipelineError {
   StoreErr(store.StoreError)
   InstallErr(installer.InstallerError)
   ProvenanceErr(name: String, detail: String)
+  OfflinePackageMissing(name: String, version: String, registry: types.Registry)
 }
 
 /// pipeline 경고 타입 — cli에서 출력 담당
@@ -52,10 +55,14 @@ pub fn run(
   resolve_result: ResolveResult,
   project_dir: String,
   security: SecurityConfig,
+  progress: ProgressHandle,
+  offline: Bool,
 ) -> Result(PipelineResult, PipelineError) {
-  // 0. npm 서명 키 로드 (npm 패키지가 있고 ProvenanceIgnore가 아닐 때만)
+  // offline: store에 없는 패키지가 있으면 즉시 실패
+  use _ <- result.try(check_offline_packages(resolve_result.packages, offline))
+  // 0. npm 서명 키 로드 (npm 패키지가 있고 ProvenanceIgnore가 아닐 때만, offline 시 skip)
   let has_npm = list.any(resolve_result.packages, fn(p) { p.registry == Npm })
-  let npm_keys = case has_npm {
+  let npm_keys = case has_npm && !offline {
     True -> load_npm_keys(security.provenance)
     False -> []
   }
@@ -69,6 +76,7 @@ pub fn run(
   use download_results <- result.try(download_and_store_all(
     resolve_result.packages,
     ctx,
+    progress,
   ))
   let updated = list.map(download_results, fn(dr) { dr.package })
   let bin_map =
@@ -163,12 +171,44 @@ fn is_script_allowed(name: String, policy: types.ScriptPolicy) -> Bool {
   }
 }
 
+/// offline 모드일 때 store에 없는 패키지 확인
+fn check_offline_packages(
+  packages: List(ResolvedPackage),
+  offline: Bool,
+) -> Result(Nil, PipelineError) {
+  case offline {
+    False -> Ok(Nil)
+    True -> {
+      let missing =
+        list.filter(packages, fn(p) {
+          case store.has_package(p.sha256, p.registry) {
+            Ok(True) -> False
+            _ -> True
+          }
+        })
+      case missing {
+        [first, ..] ->
+          Error(OfflinePackageMissing(
+            name: first.name,
+            version: first.version,
+            registry: first.registry,
+          ))
+        [] -> Ok(Nil)
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 다운로드 & 저장
 // ---------------------------------------------------------------------------
 
 type DownloadResult {
-  DownloadResult(package: ResolvedPackage, bin: List(#(String, String)))
+  DownloadResult(
+    package: ResolvedPackage,
+    bin: List(#(String, String)),
+    bytes_downloaded: Int,
+  )
 }
 
 type DownloadContext {
@@ -193,6 +233,7 @@ fn load_npm_keys(policy: types.ProvenancePolicy) -> List(#(String, String)) {
 fn download_and_store_all(
   packages: List(ResolvedPackage),
   ctx: DownloadContext,
+  prog: ProgressHandle,
 ) -> Result(List(DownloadResult), PipelineError) {
   // 이미 store에 있는 패키지와 다운로드 필요한 패키지 분리
   let #(cached, to_download) =
@@ -206,10 +247,16 @@ fn download_and_store_all(
           }
       }
     })
+  // 캐시된 패키지에 Cached 이벤트 전송
+  list.each(cached, fn(pkg) {
+    progress.send(prog, progress.Cached(name: pkg.name, version: pkg.version))
+  })
   let cached_results =
-    list.map(cached, fn(pkg) { DownloadResult(package: pkg, bin: []) })
+    list.map(cached, fn(pkg) {
+      DownloadResult(package: pkg, bin: [], bytes_downloaded: 0)
+    })
   // 병렬 다운로드
-  use downloaded <- result.try(download_parallel(to_download, ctx))
+  use downloaded <- result.try(download_parallel(to_download, ctx, prog))
   Ok(
     list.append(cached_results, downloaded)
     |> list.sort(fn(a, b) { types.compare_packages(a.package, b.package) }),
@@ -219,6 +266,7 @@ fn download_and_store_all(
 fn download_parallel(
   packages: List(ResolvedPackage),
   ctx: DownloadContext,
+  prog: ProgressHandle,
 ) -> Result(List(DownloadResult), PipelineError) {
   case packages {
     [] -> Ok([])
@@ -227,7 +275,27 @@ fn download_parallel(
       let count = list.length(packages)
       list.each(packages, fn(pkg) {
         process.spawn(fn() {
+          progress.send(
+            prog,
+            progress.Started(name: pkg.name, version: pkg.version),
+          )
           let result = download_and_store_one(pkg, ctx)
+          case result {
+            Ok(dr) ->
+              progress.send(
+                prog,
+                progress.Complete(
+                  name: pkg.name,
+                  version: pkg.version,
+                  bytes: dr.bytes_downloaded,
+                ),
+              )
+            Error(_) ->
+              progress.send(
+                prog,
+                progress.Failed(name: pkg.name, version: pkg.version),
+              )
+          }
           process.send(subject, result)
         })
       })
@@ -266,7 +334,7 @@ fn download_and_store_one(
       }
   }
   case already_stored {
-    True -> Ok(DownloadResult(package: pkg, bin: []))
+    True -> Ok(DownloadResult(package: pkg, bin: [], bytes_downloaded: 0))
     False -> {
       // tarball URL 조회 (빈 문자열이면 기본 URL 생성)
       let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
@@ -277,6 +345,7 @@ fn download_and_store_one(
       let tarball_url = resolve_tarball_url(pkg, tarball_url)
       // 다운로드 (3회 재시도)
       use #(data, sha256) <- result.try(download_with_retry(pkg, tarball_url, 3))
+      let data_size = bit_array.byte_size(data)
       // npm Sigstore 서명 검증 (다운로드 후, store 전)
       use _ <- result.try(verify_provenance_if_npm(pkg, data, ctx))
       // npm SRI integrity 검증
@@ -292,7 +361,11 @@ fn download_and_store_one(
           sha256: sha256,
           has_scripts: store_result.has_scripts,
         )
-      Ok(DownloadResult(package: updated_pkg, bin: store_result.bin))
+      Ok(DownloadResult(
+        package: updated_pkg,
+        bin: store_result.bin,
+        bytes_downloaded: data_size,
+      ))
     }
   }
 }

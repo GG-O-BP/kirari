@@ -1,5 +1,6 @@
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit
 import kirari/lockfile
 import kirari/types.{type ResolvedPackage, Hex, Npm, ResolvedPackage}
@@ -18,6 +19,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -27,6 +29,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     ),
     ResolvedPackage(
       name: "gleam_json",
@@ -36,6 +39,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     ),
   ]
 }
@@ -46,7 +50,7 @@ fn sample_packages() -> List(ResolvedPackage) {
 
 pub fn from_packages_sorts_alphabetically_test() {
   let lock = lockfile.from_packages(sample_packages())
-  assert lock.version == 1
+  assert lock.version == lockfile.lock_version
   assert list.length(lock.packages) == 3
   let assert [first, second, third] = lock.packages
   assert first.name == "gleam_json"
@@ -80,7 +84,7 @@ pub fn empty_lock_roundtrip_test() {
   let encoded = lockfile.encode(lock)
   let assert Ok(parsed) = lockfile.parse(encoded)
   assert parsed.packages == []
-  assert parsed.version == 1
+  assert parsed.version == lockfile.lock_version
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +127,7 @@ pub fn verify_frozen_mismatch_test() {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     ),
   ]
   let assert Error(lockfile.FrozenMismatch(_)) =
@@ -168,4 +173,93 @@ version = \"2.0.0\"
   assert first.name == "alpha"
   assert second.name == "beta"
   assert second.registry == Npm
+}
+
+// ---------------------------------------------------------------------------
+// config-fingerprint round-trip
+// ---------------------------------------------------------------------------
+
+pub fn encode_parse_fingerprint_roundtrip_test() {
+  let lock =
+    lockfile.from_packages_with_fingerprint(sample_packages(), "abc123def456")
+  let encoded = lockfile.encode(lock)
+  let assert Ok(parsed) = lockfile.parse(encoded)
+  assert parsed.config_fingerprint == Ok("abc123def456")
+}
+
+pub fn parse_legacy_lock_without_fingerprint_test() {
+  let content =
+    "version = 1
+
+[[package]]
+name = \"alpha\"
+registry = \"hex\"
+sha256 = \"aaa\"
+version = \"1.0.0\"
+"
+  let assert Ok(lock) = lockfile.parse(content)
+  assert lock.config_fingerprint == Error(Nil)
+}
+
+pub fn from_packages_has_no_fingerprint_test() {
+  let lock = lockfile.from_packages(sample_packages())
+  assert lock.config_fingerprint == Error(Nil)
+}
+
+pub fn from_packages_with_fingerprint_has_fingerprint_test() {
+  let lock = lockfile.from_packages_with_fingerprint(sample_packages(), "fp123")
+  assert lock.config_fingerprint == Ok("fp123")
+}
+
+// ---------------------------------------------------------------------------
+// lockfile 버전 마이그레이션
+// ---------------------------------------------------------------------------
+
+pub fn parse_v1_lock_migrates_to_current_test() {
+  let content =
+    "version = 1\n\n[[package]]\nname = \"a\"\nregistry = \"hex\"\nsha256 = \"x\"\nversion = \"1.0.0\"\n"
+  let assert Ok(lock) = lockfile.parse(content)
+  // v1 lockfile → 현재 버전으로 마이그레이션
+  assert lock.version == lockfile.lock_version
+}
+
+pub fn parse_v2_lock_unchanged_test() {
+  let content =
+    "version = 2\n\n[[package]]\nname = \"a\"\nregistry = \"hex\"\nsha256 = \"x\"\nversion = \"1.0.0\"\n"
+  let assert Ok(lock) = lockfile.parse(content)
+  assert lock.version == 2
+}
+
+pub fn parse_future_version_fails_test() {
+  let content =
+    "version = 99\n\n[[package]]\nname = \"a\"\nregistry = \"hex\"\nsha256 = \"x\"\nversion = \"1.0.0\"\n"
+  let assert Error(lockfile.UnsupportedLockVersion(99, _)) =
+    lockfile.parse(content)
+}
+
+pub fn parse_v1_with_dev_field_preserves_dev_test() {
+  let content =
+    "version = 1\n\n[[package]]\ndev = true\nname = \"a\"\nregistry = \"hex\"\nsha256 = \"x\"\nversion = \"1.0.0\"\n"
+  let assert Ok(lock) = lockfile.parse(content)
+  let assert [pkg] = lock.packages
+  assert pkg.dev == True
+}
+
+pub fn parse_v1_without_dev_defaults_false_test() {
+  let content =
+    "version = 1\n\n[[package]]\nname = \"a\"\nregistry = \"hex\"\nsha256 = \"x\"\nversion = \"1.0.0\"\n"
+  let assert Ok(lock) = lockfile.parse(content)
+  let assert [pkg] = lock.packages
+  assert pkg.dev == False
+}
+
+pub fn from_packages_uses_current_version_test() {
+  let lock = lockfile.from_packages([])
+  assert lock.version == lockfile.lock_version
+}
+
+pub fn encode_uses_current_version_test() {
+  let lock = lockfile.from_packages([])
+  let encoded = lockfile.encode(lock)
+  assert string.contains(encoded, "version = 2")
 }

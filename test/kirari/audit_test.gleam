@@ -20,6 +20,7 @@ fn hex_pkg(name: String, version: String) -> ResolvedPackage {
     has_scripts: False,
     platform: Error(Nil),
     license: "MIT",
+    dev: False,
   )
 }
 
@@ -32,6 +33,7 @@ fn npm_pkg(name: String, version: String) -> ResolvedPackage {
     has_scripts: False,
     platform: Error(Nil),
     license: "MIT",
+    dev: False,
   )
 }
 

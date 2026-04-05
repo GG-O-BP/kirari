@@ -1,7 +1,10 @@
 //// CLI 에러 타입 — 모든 모듈 에러를 래핑하는 최상위 에러
 
+import gleam/int
+import gleam/list
 import gleam/string
 import kirari/audit
+import kirari/cli/engines
 import kirari/config
 import kirari/export
 import kirari/ffi as ffi_detect
@@ -11,6 +14,7 @@ import kirari/lockfile
 import kirari/migrate
 import kirari/pipeline
 import kirari/resolver
+import kirari/resolver/conflict
 import kirari/types
 
 /// 최상위 에러 타입 — 모든 모듈 에러를 래핑
@@ -24,6 +28,7 @@ pub type KirError {
   LicenseErr(license.LicenseError)
   AuditErr(audit.AuditError)
   FfiErr(ffi_detect.FfiError)
+  EnginesErr(violations: List(engines.EngineViolation))
   UserError(detail: String)
 }
 
@@ -49,6 +54,12 @@ pub fn format_error(error: KirError) -> String {
         lockfile.ParseError(d) -> "lockfile parse error: " <> d
         lockfile.FrozenMismatch(d) -> "frozen lockfile mismatch: " <> d
         lockfile.WriteError(p, d) -> "lockfile write error " <> p <> ": " <> d
+        lockfile.UnsupportedLockVersion(v, max) ->
+          "kir.lock version "
+          <> int.to_string(v)
+          <> " is newer than supported version "
+          <> int.to_string(max)
+          <> ". Upgrade kirari."
       }
     ResolveErr(e) ->
       case e {
@@ -67,8 +78,11 @@ pub fn format_error(error: KirError) -> String {
         resolver.RegistryError(d) -> "registry error: " <> d
         resolver.CyclicDependency(c) ->
           "cyclic dependency: " <> string.join(c, " → ")
-        resolver.ResolutionConflict(explanation) ->
-          "dependency resolution failed:\n" <> explanation
+        resolver.ResolutionConflict(explanation, report) ->
+          case report {
+            Ok(r) -> conflict.format_report(r)
+            Error(_) -> "dependency resolution failed:\n" <> explanation
+          }
       }
     PipelineErr(e) ->
       case e {
@@ -89,6 +103,14 @@ pub fn format_error(error: KirError) -> String {
           }
         pipeline.ProvenanceErr(name, detail) ->
           "provenance verification failed: " <> name <> " — " <> detail
+        pipeline.OfflinePackageMissing(name, version, registry) ->
+          "package not available offline: "
+          <> name
+          <> "@"
+          <> version
+          <> " ("
+          <> types.registry_to_string(registry)
+          <> ")"
       }
     ExportErr(e) ->
       case e {
@@ -109,6 +131,23 @@ pub fn format_error(error: KirError) -> String {
       case e {
         license.PolicyConflict(d) -> "license policy conflict: " <> d
       }
+    EnginesErr(violations) ->
+      "engine constraint not satisfied:\n"
+      <> string.join(
+        list.map(violations, fn(v) {
+          let detected_str = case v.detected {
+            Ok(ver) -> ver
+            Error(reason) -> reason
+          }
+          "  "
+          <> v.engine
+          <> " "
+          <> detected_str
+          <> " does not satisfy "
+          <> v.constraint
+        }),
+        "\n",
+      )
     UserError(d) -> d
   }
 }

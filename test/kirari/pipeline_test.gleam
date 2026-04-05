@@ -1,6 +1,7 @@
 import gleam/dict
 import gleam/list
 import gleeunit
+import kirari/cli/progress
 import kirari/pipeline
 import kirari/platform
 import kirari/resolver.{ResolveResult}
@@ -31,13 +32,20 @@ pub fn run_skips_cached_packages_test() {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     )
   let resolve_result =
     ResolveResult(packages: [pkg], version_infos: dict.new(), peer_warnings: [])
   let security = types.default_security_config()
   // pipeline.run은 이미 store에 있으므로 다운로드 없이 성공
   let assert Ok(result) =
-    pipeline.run(resolve_result, test_project_dir(), security)
+    pipeline.run(
+      resolve_result,
+      test_project_dir(),
+      security,
+      progress.Inactive,
+      False,
+    )
   assert list.length(result.packages) == 1
   let assert [p] = result.packages
   assert p.sha256 == hash
@@ -54,7 +62,13 @@ pub fn run_empty_packages_test() {
     ResolveResult(packages: [], version_infos: dict.new(), peer_warnings: [])
   let security = types.default_security_config()
   let assert Ok(result) =
-    pipeline.run(resolve_result, test_project_dir(), security)
+    pipeline.run(
+      resolve_result,
+      test_project_dir(),
+      security,
+      progress.Inactive,
+      False,
+    )
   assert result.packages == []
   let _ = simplifile.delete(test_project_dir())
 }

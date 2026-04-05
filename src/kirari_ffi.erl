@@ -18,7 +18,11 @@
     verify_ecdsa_signature/3,
     get_current_timestamp/0,
     get_env/1,
-    uuid_v4/0
+    uuid_v4/0,
+    get_terminal_width/0,
+    is_tty/0,
+    set_log_level/1,
+    get_log_level/0
 ]).
 
 %% tar/tgz 압축 해제
@@ -220,6 +224,30 @@ get_env(Key) when is_binary(Key) ->
     case os:getenv(binary_to_list(Key)) of
         false -> {error, <<"not set">>};
         Val -> {ok, list_to_binary(Val)}
+    end.
+
+%% 터미널 폭 반환 (TTY가 아니면 80)
+get_terminal_width() ->
+    case io:columns() of
+        {ok, Cols} -> Cols;
+        {error, _} -> 80
+    end.
+
+%% stdout이 TTY인지 확인
+is_tty() ->
+    case io:columns() of
+        {ok, _} -> true;
+        {error, _} -> false
+    end.
+
+%% 로그 레벨 (persistent_term — CLI 시작 시 1회 설정, 전 프로세스 읽기)
+set_log_level(Level) when is_binary(Level) ->
+    persistent_term:put(kir_log_level, Level),
+    nil.
+
+get_log_level() ->
+    try persistent_term:get(kir_log_level)
+    catch error:badarg -> <<"normal">>
     end.
 
 %% UUID v4 생성 (RFC 4122)

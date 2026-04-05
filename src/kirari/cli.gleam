@@ -7,8 +7,10 @@ import glint
 import kirari/audit
 import kirari/cli/error
 import kirari/cli/install
+import kirari/cli/log
 import kirari/cli/output
 import kirari/cli/query
+import kirari/completion
 import kirari/config
 import kirari/platform
 import kirari/sbom
@@ -88,6 +90,7 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   )
   |> glint.add(at: ["license"], do: license_cmd())
   |> glint.add(at: ["audit"], do: audit_cmd())
+  |> glint.add(at: ["completion"], do: completion_cmd())
   |> glint.add(at: ["build"], do: build_cmd())
   |> glint.add(at: ["run"], do: run_cmd())
   |> glint.add(at: ["test"], do: test_cmd())
@@ -212,15 +215,33 @@ fn install_cmd() -> glint.Command(Nil) {
     |> glint.flag_default(False)
     |> glint.flag_help("Suppress output (CI mode)"),
   )
+  use verify_flag <- glint.flag(
+    glint.bool_flag("verify")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Verify installed package integrity after install"),
+  )
+  use verbose_flag <- glint.flag(
+    glint.bool_flag("verbose")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Show detailed progress information"),
+  )
+  use debug_flag <- glint.flag(
+    glint.bool_flag("debug")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Show internal debug trace"),
+  )
   glint.command(fn(_named, _args, flags) {
     let frozen = frozen_flag(flags) |> result.unwrap(False)
     let exclude_newer = exclude_newer_flag(flags) |> result.unwrap("")
     let offline = offline_flag(flags) |> result.unwrap(False)
     let quiet = quiet_flag(flags) |> result.unwrap(False)
-    let install_result = case offline, quiet {
-      True, _ -> install.do_install_offline(".")
-      _, True -> install.do_install_quiet(".")
-      _, _ -> install.do_install(".", frozen, exclude_newer)
+    let verify = verify_flag(flags) |> result.unwrap(False)
+    let verbose = verbose_flag(flags) |> result.unwrap(False)
+    let debug = debug_flag(flags) |> result.unwrap(False)
+    log.init(log.determine_level(quiet, verbose, debug))
+    let install_result = case quiet {
+      True -> install.do_install_quiet(".")
+      False -> install.do_install(".", frozen, exclude_newer, verify, offline)
     }
     case install_result {
       Ok(_) -> Nil
@@ -293,8 +314,14 @@ fn update_cmd() -> glint.Command(Nil) {
 
 fn deps_list_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("List all dependencies")
-  glint.command(fn(_named, _args, _flags) {
-    case install.do_deps_list(".") {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    case install.do_deps_list(".", json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -313,8 +340,14 @@ fn deps_download_cmd() -> glint.Command(Nil) {
 
 fn tree_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Print the unified dependency tree")
-  glint.command(fn(_named, _args, _flags) {
-    case install.do_tree(".") {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    case install.do_tree(".", json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -490,8 +523,14 @@ fn gleam_passthrough_cmd(help: String, cmd: String) -> glint.Command(Nil) {
 
 fn outdated_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("List outdated dependencies")
-  glint.command(fn(_named, _args, _flags) {
-    case query.do_outdated(".") {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    case query.do_outdated(".", json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -500,10 +539,16 @@ fn outdated_cmd() -> glint.Command(Nil) {
 
 fn why_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Explain why a package is installed")
-  glint.command(fn(_named, args, _flags) {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
     case args {
       [name, ..] ->
-        case query.do_why(".", name) {
+        case query.do_why(".", name, json) {
           Ok(_) -> Nil
           Error(e) -> output.print_error(e)
         }
@@ -514,8 +559,14 @@ fn why_cmd() -> glint.Command(Nil) {
 
 fn diff_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Show lock changes (update preview)")
-  glint.command(fn(_named, _args, _flags) {
-    case query.do_diff(".") {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    case query.do_diff(".", json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -524,8 +575,14 @@ fn diff_cmd() -> glint.Command(Nil) {
 
 fn ls_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("List installed packages with paths")
-  glint.command(fn(_named, _args, _flags) {
-    case query.do_ls(".") {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    case query.do_ls(".", json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -539,8 +596,23 @@ fn doctor_cmd() -> glint.Command(Nil) {
 
 fn store_verify_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Verify cached package integrity")
-  glint.command(fn(_named, _args, _flags) {
-    case query.do_store_verify(".") {
+  use quick_flag <- glint.flag(
+    glint.bool_flag("quick")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Quick check (manifest exists + file count only)"),
+  )
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let quick = case quick_flag(flags) {
+      Ok(v) -> v
+      Error(_) -> False
+    }
+    let json = json_flag(flags) |> result.unwrap(False)
+    case query.do_store_verify(".", quick, json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -549,10 +621,37 @@ fn store_verify_cmd() -> glint.Command(Nil) {
 
 fn license_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Audit dependency licenses against policy")
-  glint.command(fn(_named, _args, _flags) {
-    case query.do_license(".") {
+  use json_flag <- glint.flag(
+    glint.bool_flag("json")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Output as JSON"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let json = json_flag(flags) |> result.unwrap(False)
+    case query.do_license(".", json) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
+    }
+  })
+}
+
+fn completion_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help(
+    "Generate shell completion script (bash, zsh, fish)",
+  )
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      ["bash", ..] -> io.println(completion.generate_bash())
+      ["zsh", ..] -> io.println(completion.generate_zsh())
+      ["fish", ..] -> io.println(completion.generate_fish())
+      _ ->
+        io.println(
+          "Usage: kir completion <bash|zsh|fish>\n\n"
+          <> "Examples:\n"
+          <> "  eval \"$(kir completion bash)\"    # bash\n"
+          <> "  kir completion zsh > ~/.zfunc/_kir  # zsh\n"
+          <> "  kir completion fish | source        # fish",
+        )
     }
   })
 }

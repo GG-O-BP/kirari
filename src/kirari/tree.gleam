@@ -1,6 +1,7 @@
 //// 의존성 트리 출력 — 전이 의존성 포함, 유니코드 박스 문자 사용
 
 import gleam/dict.{type Dict}
+import gleam/json
 import gleam/list
 import gleam/string
 import kirari/resolver
@@ -13,6 +14,7 @@ pub type TreeNode {
     version: String,
     registry: String,
     children: List(TreeNode),
+    dev: Bool,
   )
 }
 
@@ -91,7 +93,24 @@ fn build_node(
     version: pkg.version,
     registry: types.registry_to_string(pkg.registry),
     children: children,
+    dev: pkg.dev,
   )
+}
+
+/// 트리를 JSON 문자열로 직렬화 (재귀)
+pub fn to_json(roots: List(TreeNode)) -> String {
+  json.array(roots, node_to_json)
+  |> json.to_string
+}
+
+fn node_to_json(node: TreeNode) -> json.Json {
+  json.object([
+    #("name", json.string(node.name)),
+    #("version", json.string(node.version)),
+    #("registry", json.string(node.registry)),
+    #("dev", json.bool(node.dev)),
+    #("children", json.array(node.children, node_to_json)),
+  ])
 }
 
 /// 트리를 문자열로 렌더링
@@ -125,6 +144,10 @@ fn render_indexed(
         True -> prefix <> "    "
         False -> prefix <> "│   "
       }
+      let dev_suffix = case node.dev {
+        True -> " (dev)"
+        False -> ""
+      }
       let line =
         prefix
         <> connector
@@ -134,6 +157,7 @@ fn render_indexed(
         <> " ("
         <> node.registry
         <> ")"
+        <> dev_suffix
       let child_lines = render_nodes(node.children, child_prefix)
       [line, ..list.append(child_lines, render_indexed(rest, prefix, total))]
     }

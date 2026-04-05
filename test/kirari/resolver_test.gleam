@@ -249,6 +249,7 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
     path_deps: [],
     path_dev_deps: [],
     overrides: [],
+    engines: types.default_engines_config(),
   )
 }
 
@@ -329,7 +330,7 @@ pub fn resolve_incompatible_test() {
         optional: False,
       ),
     ])
-  let assert Error(resolver.ResolutionConflict(_)) =
+  let assert Error(resolver.ResolutionConflict(_, _)) =
     resolver.resolve_with(config, Error(Nil), mock_fetch)
 }
 
@@ -349,7 +350,7 @@ pub fn resolve_prefers_lock_test() {
       ),
     ])
   let lock =
-    KirLock(version: 1, packages: [
+    KirLock(version: 1, config_fingerprint: Error(Nil), packages: [
       ResolvedPackage(
         name: "gleam_stdlib",
         version: "0.44.0",
@@ -358,6 +359,7 @@ pub fn resolve_prefers_lock_test() {
         has_scripts: False,
         platform: Error(Nil),
         license: "",
+        dev: False,
       ),
     ])
   let assert Ok(resolved) = resolver.resolve_with(config, Ok(lock), mock_fetch)
@@ -474,12 +476,15 @@ pub fn resolve_diamond_conflict_test() {
         optional: False,
       ),
     ])
-  let assert Error(resolver.ResolutionConflict(explanation)) =
+  let assert Error(resolver.ResolutionConflict(explanation, report)) =
     resolver.resolve_with(config, Error(Nil), mock_fetch)
   // 충돌 설명에 pkg_shared와 의존성 정보 포함
   assert string.contains(explanation, "pkg_shared")
   assert string.contains(explanation, "pkg_b")
     || string.contains(explanation, "pkg_a")
+  // 구조화된 리포트가 존재해야 함
+  let assert Ok(r) = report
+  assert list.length(r.causes) >= 1
 }
 
 pub fn resolve_diamond_compatible_test() {
@@ -509,3 +514,147 @@ pub fn resolve_diamond_compatible_test() {
 }
 
 import gleam/string
+
+// ---------------------------------------------------------------------------
+// dev 전이 의존성 분류
+// ---------------------------------------------------------------------------
+
+/// mock_fetch_deps는 no-op (Hex release deps 불필요 — mock_fetch에서 이미 제공)
+fn mock_fetch_deps(
+  _name: String,
+  _version: String,
+  _registry: Registry,
+) -> Result(#(List(types.Dependency), String), ResolverError) {
+  Ok(#([], ""))
+}
+
+pub fn classify_dev_pure_prod_test() {
+  // 모든 의존성이 prod → 전부 dev: False
+  let config =
+    test_config([
+      Dependency(
+        name: "gleam_stdlib",
+        version_constraint: ">= 0.44.0 and < 2.0.0",
+        registry: Hex,
+        dev: False,
+        optional: False,
+      ),
+    ])
+  let assert Ok(result) =
+    resolver.resolve_full_with_deps(
+      config,
+      Error(Nil),
+      mock_fetch,
+      mock_fetch_deps,
+    )
+  list.each(result.packages, fn(p) {
+    assert p.dev == False
+  })
+}
+
+pub fn classify_dev_pure_dev_test() {
+  // 모든 의존성이 dev → 전부 dev: True
+  let config =
+    test_config([
+      Dependency(
+        name: "gleam_stdlib",
+        version_constraint: ">= 0.44.0 and < 2.0.0",
+        registry: Hex,
+        dev: True,
+        optional: False,
+      ),
+    ])
+  let assert Ok(result) =
+    resolver.resolve_full_with_deps(
+      config,
+      Error(Nil),
+      mock_fetch,
+      mock_fetch_deps,
+    )
+  list.each(result.packages, fn(p) {
+    assert p.dev == True
+  })
+}
+
+pub fn classify_dev_shared_transitive_test() {
+  // prod: gleam_json → gleam_stdlib (전이)
+  // dev: gleam_stdlib (직접 dev)
+  // gleam_stdlib은 prod에서 도달 가능 → dev: False
+  let config =
+    KirConfig(
+      ..test_config([]),
+      hex_deps: [
+        Dependency(
+          name: "gleam_json",
+          version_constraint: ">= 3.0.0",
+          registry: Hex,
+          dev: False,
+          optional: False,
+        ),
+      ],
+      hex_dev_deps: [
+        Dependency(
+          name: "gleam_stdlib",
+          version_constraint: ">= 0.44.0",
+          registry: Hex,
+          dev: True,
+          optional: False,
+        ),
+      ],
+    )
+  let assert Ok(result) =
+    resolver.resolve_full_with_deps(
+      config,
+      Error(Nil),
+      mock_fetch,
+      mock_fetch_deps,
+    )
+  let assert Ok(stdlib) =
+    list.find(result.packages, fn(p) { p.name == "gleam_stdlib" })
+  // prod에서 ��이 의존성으로 도달 가능 → dev: False
+  assert stdlib.dev == False
+  let assert Ok(json_pkg) =
+    list.find(result.packages, fn(p) { p.name == "gleam_json" })
+  assert json_pkg.dev == False
+}
+
+pub fn classify_dev_only_chain_test() {
+  // dev: highlight.js (직접 dev, npm)
+  // prod: gleam_stdlib (직접 prod, hex)
+  // highlight.js는 prod에서 도달 불가 → dev: True
+  let config =
+    KirConfig(
+      ..test_config([]),
+      hex_deps: [
+        Dependency(
+          name: "gleam_stdlib",
+          version_constraint: ">= 0.44.0",
+          registry: Hex,
+          dev: False,
+          optional: False,
+        ),
+      ],
+      npm_dev_deps: [
+        Dependency(
+          name: "highlight.js",
+          version_constraint: "^11.0.0",
+          registry: Npm,
+          dev: True,
+          optional: False,
+        ),
+      ],
+    )
+  let assert Ok(result) =
+    resolver.resolve_full_with_deps(
+      config,
+      Error(Nil),
+      mock_fetch,
+      mock_fetch_deps,
+    )
+  let assert Ok(stdlib) =
+    list.find(result.packages, fn(p) { p.name == "gleam_stdlib" })
+  assert stdlib.dev == False
+  let assert Ok(hljs) =
+    list.find(result.packages, fn(p) { p.name == "highlight.js" })
+  assert hljs.dev == True
+}

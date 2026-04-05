@@ -22,7 +22,13 @@ kir 프로젝트의 코드를 리뷰한다.
 12. 라이선스: license.gleam의 AllowList/DenyList/NoPolicy 분기, Missing/Unparsable 처리
 13. CLI 구조: cli.gleam은 라우터만, cli/install.gleam은 워크플로우, cli/query.gleam은 조회, cli/output.gleam은 출력
 14. CAS 공통: store/cas.gleam의 공통 헬퍼가 store/hex, store/npm에서 올바르게 사용되는지
-15. 테스트: 대응하는 테스트 파일 존재 여부
+15. 무결성 매니페스트: store/manifest.gleam의 generate/verify_full/verify_quick, store_package에서 manifest.generate 호출 여부
+16. Incremental resolution: resolver/fingerprint.gleam의 해시 결정론성, KirLock.config_fingerprint 사용, resolution_needed 3-tier 분기
+17. 충돌 분석: resolver/conflict.gleam의 analyze/suggest/format_report, PubGrubError에 root_cause+version_cache 전달
+18. JSON 출력: --json 플래그 시 io.println(json.to_string(...))만 출력 (텍스트 혼합 금지), gleam_json 패턴 준수
+19. 셸 완성: completion.gleam의 명령 트리가 cli.gleam 등록과 일치하는지
+20. npm dist-tags: semver.is_dist_tag 감지, cli/install.gleam에서 tag→^version 해결, resolver.gleam에서 사전 해결
+21. 테스트: 대응하는 테스트 파일 존재 여부
 
 ## 보고
 파일별 체크리스트. 이상 없는 항목은 생략.

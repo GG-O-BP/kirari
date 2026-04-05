@@ -69,6 +69,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     decode_deps_from_table(doc, ["dev-npm-dependencies"], Npm, True)
   let security = decode_security_section(doc)
   let overrides = decode_overrides(doc)
+  let engines = decode_engines_section(doc)
   Ok(KirConfig(
     package: package,
     hex_deps: hex_deps,
@@ -79,6 +80,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     path_deps: path_deps,
     path_dev_deps: path_dev_deps,
     overrides: overrides,
+    engines: engines,
   ))
 }
 
@@ -301,6 +303,7 @@ pub fn encode_config(config: KirConfig) -> String {
     encode_override_section("overrides", config.overrides, Hex),
     encode_override_section("npm-overrides", config.overrides, Npm),
     encode_security_section(config.security),
+    encode_engines_section(config.engines),
   ]
   |> list.filter(fn(s) { s != "" })
   |> string.join("\n")
@@ -449,6 +452,41 @@ fn encode_security_section(sec: SecurityConfig) -> String {
   case lines {
     [] -> ""
     _ -> "[security]\n" <> string.join(list.reverse(lines), "\n") <> "\n"
+  }
+}
+
+/// [engines] 섹션 디코딩
+fn decode_engines_section(doc: Dict(String, Toml)) -> types.EnginesConfig {
+  let gleam =
+    tom.get_string(doc, ["engines", "gleam"])
+    |> result.map_error(fn(_) { Nil })
+  let erlang =
+    tom.get_string(doc, ["engines", "erlang"])
+    |> result.map_error(fn(_) { Nil })
+  let node =
+    tom.get_string(doc, ["engines", "node"])
+    |> result.map_error(fn(_) { Nil })
+  types.EnginesConfig(gleam: gleam, erlang: erlang, node: node)
+}
+
+/// [engines] 섹션 인코딩
+fn encode_engines_section(engines: types.EnginesConfig) -> String {
+  let lines = []
+  let lines = case engines.erlang {
+    Ok(c) -> ["erlang = " <> quote(c), ..lines]
+    Error(_) -> lines
+  }
+  let lines = case engines.gleam {
+    Ok(c) -> ["gleam = " <> quote(c), ..lines]
+    Error(_) -> lines
+  }
+  let lines = case engines.node {
+    Ok(c) -> ["node = " <> quote(c), ..lines]
+    Error(_) -> lines
+  }
+  case lines {
+    [] -> ""
+    _ -> "[engines]\n" <> string.join(list.reverse(lines), "\n") <> "\n"
   }
 }
 

@@ -6,6 +6,7 @@ import gleam/list
 import gleam/result
 import kirari/platform
 import kirari/store/hex as hex_store
+import kirari/store/manifest
 import kirari/store/npm as npm_store
 import kirari/store/types as store_types
 import kirari/types.{type Registry, Hex, Npm}
@@ -79,6 +80,42 @@ pub fn store_package(
     Hex -> hex_store.store_package(data, expected_sha256, name, version)
     Npm -> npm_store.store_package(data, expected_sha256, name, version)
   }
+}
+
+// ---------------------------------------------------------------------------
+// 패키지 무결성 검증
+// ---------------------------------------------------------------------------
+
+/// 패키지 무결성 전체 검증 (Level 3: 모든 파일 SHA256 재계산)
+pub fn verify_package(
+  sha256: String,
+  registry: Registry,
+) -> Result(manifest.VerifyResult, StoreError) {
+  use path <- result.try(package_path(sha256, registry))
+  manifest.verify_full(path)
+  |> result.map_error(fn(e) {
+    case e {
+      manifest.ReadError(d) -> store_types.IoError(d)
+      manifest.WriteError(d) -> store_types.IoError(d)
+      manifest.ParseError(d) -> store_types.IoError(d)
+    }
+  })
+}
+
+/// 패키지 빠른 검증 (Level 2: 매니페스트 존재 + 파일 수)
+pub fn verify_package_quick(
+  sha256: String,
+  registry: Registry,
+) -> Result(manifest.VerifyResult, StoreError) {
+  use path <- result.try(package_path(sha256, registry))
+  manifest.verify_quick(path)
+  |> result.map_error(fn(e) {
+    case e {
+      manifest.ReadError(d) -> store_types.IoError(d)
+      manifest.WriteError(d) -> store_types.IoError(d)
+      manifest.ParseError(d) -> store_types.IoError(d)
+    }
+  })
 }
 
 /// 레지스트리별 store 내 캐시된 패키지 수 반환

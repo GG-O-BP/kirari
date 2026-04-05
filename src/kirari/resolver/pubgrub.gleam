@@ -19,7 +19,11 @@ import kirari/types.{
 
 /// resolver 에러 (pubgrub 내부에서 사용, resolver.gleam으로 전파)
 pub type PubGrubError {
-  ResolutionConflict(explanation: String)
+  ResolutionConflict(
+    explanation: String,
+    root_cause: Result(Incompatibility, Nil),
+    version_cache: Dict(String, List(VersionInfoCompact)),
+  )
   PkgNotFound(name: String, registry: Registry)
   RegError(detail: String)
 }
@@ -54,6 +58,8 @@ pub type SolverContext {
     existing_lock: Result(KirLock, Nil),
     exclude_newer: Result(String, Nil),
     overrides: Dict(String, String),
+    /// 병렬 prefetch된 버전 캐시 — solver 시작 시 version_cache 초기값
+    prefetch_cache: Dict(String, List(VersionInfoCompact)),
   )
 }
 
@@ -84,7 +90,7 @@ pub fn solve(
     SolverState(
       ps: partial_solution.new(),
       incompatibilities: dict.new(),
-      version_cache: dict.new(),
+      version_cache: ctx.prefetch_cache,
     )
   // 루트 패키지 참조 (가상)
   let root_ref = term.PackageRef(name: "$root", registry: Hex)
@@ -296,19 +302,34 @@ fn do_resolve_conflict(
     || incompatibility.term_count(inc) == 0
     || only_has_root(inc)
   {
-    True -> Error(ResolutionConflict(incompatibility.explain(inc)))
+    True ->
+      Error(ResolutionConflict(
+        incompatibility.explain(inc),
+        Ok(inc),
+        state.version_cache,
+      ))
     False -> {
       let terms = dict.to_list(inc.terms)
       // 모든 term의 satisfier 수집
       let all_satisfiers = collect_all_satisfiers(state, terms)
       case find_most_recent_in(state, all_satisfiers) {
-        Error(_) -> Error(ResolutionConflict(incompatibility.explain(inc)))
+        Error(_) ->
+          Error(ResolutionConflict(
+            incompatibility.explain(inc),
+            Ok(inc),
+            state.version_cache,
+          ))
         Ok(#(satisfier, satisfier_term, satisfier_level)) -> {
           // 두 번째 satisfier의 레벨 (prior satisfier level)
           let prior_level =
             find_prior_satisfier_level(all_satisfiers, satisfier)
           case satisfier_level < 1 {
-            True -> Error(ResolutionConflict(incompatibility.explain(inc)))
+            True ->
+              Error(ResolutionConflict(
+                incompatibility.explain(inc),
+                Ok(inc),
+                state.version_cache,
+              ))
             False ->
               case satisfier {
                 Derivation(cause: cause, ..)
@@ -324,7 +345,11 @@ fn do_resolve_conflict(
                   let backtrack_level = prior_level
                   case backtrack_level < 1 {
                     True ->
-                      Error(ResolutionConflict(incompatibility.explain(inc)))
+                      Error(ResolutionConflict(
+                        incompatibility.explain(inc),
+                        Ok(inc),
+                        state.version_cache,
+                      ))
                     False -> {
                       let new_ps =
                         partial_solution.backtrack_to(state.ps, backtrack_level)
@@ -737,6 +762,7 @@ fn extract_solution(state: SolverState, ctx: SolverContext) -> SolveResult {
                   has_scripts: False,
                   platform: Error(Nil),
                   license: vi.license,
+                  dev: False,
                 )
               // lock에서 sha256 복원
               let pkg = case ctx.existing_lock {

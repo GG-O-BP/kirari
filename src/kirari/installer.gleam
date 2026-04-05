@@ -6,6 +6,7 @@ import gleam/result
 import gleam/string
 import kirari/platform
 import kirari/store
+import kirari/store/manifest
 import kirari/types.{type ResolvedPackage, Hex, Npm}
 import simplifile
 
@@ -461,4 +462,26 @@ fn clean_dir(
     }
     Error(_) -> Ok(Nil)
   }
+}
+
+// ---------------------------------------------------------------------------
+// 설치 후 무결성 검증
+// ---------------------------------------------------------------------------
+
+/// 설치된 패키지들의 무결성을 manifest 기반으로 검증
+pub fn verify_installed(
+  packages: List(ResolvedPackage),
+  project_dir: String,
+) -> List(#(ResolvedPackage, manifest.VerifyResult)) {
+  list.filter_map(packages, fn(pkg) {
+    let path = install_path(pkg, project_dir)
+    case simplifile.is_directory(path) {
+      Ok(True) ->
+        case manifest.verify_full(path) {
+          Ok(result) -> Ok(#(pkg, result))
+          Error(_) -> Ok(#(pkg, manifest.VerifyNoManifest))
+        }
+      _ -> Error(Nil)
+    }
+  })
 }

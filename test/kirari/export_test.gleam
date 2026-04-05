@@ -51,6 +51,7 @@ fn sample_config() -> KirConfig {
     path_deps: [],
     path_dev_deps: [],
     overrides: [],
+    engines: types.default_engines_config(),
   )
 }
 

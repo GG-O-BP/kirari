@@ -47,11 +47,12 @@ fn test_config() -> KirConfig {
     path_deps: [],
     path_dev_deps: [],
     overrides: [],
+    engines: types.default_engines_config(),
   )
 }
 
 fn test_lock() -> KirLock {
-  KirLock(version: 1, packages: [
+  KirLock(version: 1, config_fingerprint: Error(Nil), packages: [
     ResolvedPackage(
       name: "gleam_stdlib",
       version: "0.44.0",
@@ -60,6 +61,7 @@ fn test_lock() -> KirLock {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -69,6 +71,7 @@ fn test_lock() -> KirLock {
       has_scripts: False,
       platform: Error(Nil),
       license: "",
+      dev: False,
     ),
   ])
 }
@@ -151,9 +154,14 @@ pub fn empty_tree_test() {
       path_deps: [],
       path_dev_deps: [],
       overrides: [],
+      engines: types.default_engines_config(),
     )
   let roots =
-    tree.build(empty_config, KirLock(version: 1, packages: []), dict.new())
+    tree.build(
+      empty_config,
+      KirLock(version: 1, config_fingerprint: Error(Nil), packages: []),
+      dict.new(),
+    )
   assert roots == []
   assert tree.render(roots) == ""
 }
@@ -174,7 +182,7 @@ pub fn transitive_deps_tree_test() {
       npm_deps: [],
     )
   let lock =
-    KirLock(version: 1, packages: [
+    KirLock(version: 1, config_fingerprint: Error(Nil), packages: [
       ResolvedPackage(
         name: "my_lib",
         version: "1.0.0",
@@ -183,6 +191,7 @@ pub fn transitive_deps_tree_test() {
         has_scripts: False,
         platform: Error(Nil),
         license: "",
+        dev: False,
       ),
       ResolvedPackage(
         name: "gleam_stdlib",
@@ -192,6 +201,7 @@ pub fn transitive_deps_tree_test() {
         has_scripts: False,
         platform: Error(Nil),
         license: "",
+        dev: False,
       ),
     ])
   let vis =

@@ -69,6 +69,8 @@ pub type ResolvedPackage {
     has_scripts: Bool,
     platform: Result(Platform, Nil),
     license: String,
+    /// dev-only 패키지 여부 (production에서 도달 불가능하면 True)
+    dev: Bool,
   )
 }
 
@@ -153,6 +155,24 @@ pub type PackageInfo {
 }
 
 // ---------------------------------------------------------------------------
+// EnginesConfig ([engines] 섹션)
+// ---------------------------------------------------------------------------
+
+/// 런타임 버전 제약 — Gleam/Erlang/Node.js
+pub type EnginesConfig {
+  EnginesConfig(
+    gleam: Result(String, Nil),
+    erlang: Result(String, Nil),
+    node: Result(String, Nil),
+  )
+}
+
+/// 기본 engines 설정 (제약 없음)
+pub fn default_engines_config() -> EnginesConfig {
+  EnginesConfig(gleam: Error(Nil), erlang: Error(Nil), node: Error(Nil))
+}
+
+// ---------------------------------------------------------------------------
 // KirConfig (kir.toml 전체)
 // ---------------------------------------------------------------------------
 
@@ -168,6 +188,7 @@ pub type KirConfig {
     path_deps: List(PathDep),
     path_dev_deps: List(PathDep),
     overrides: List(Override),
+    engines: EnginesConfig,
   )
 }
 
@@ -177,5 +198,10 @@ pub type KirConfig {
 
 /// kir.lock의 인메모리 표현
 pub type KirLock {
-  KirLock(version: Int, packages: List(ResolvedPackage))
+  KirLock(
+    version: Int,
+    packages: List(ResolvedPackage),
+    /// config fingerprint — 변경 감지용 (Error(Nil) = 레거시 lockfile)
+    config_fingerprint: Result(String, Nil),
+  )
 }

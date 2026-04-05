@@ -448,6 +448,42 @@ fn parse_npm_tilde(s: String) -> Result(Constraint, SemverError) {
 }
 
 // ---------------------------------------------------------------------------
+// npm dist-tag 감지
+// ---------------------------------------------------------------------------
+
+/// 문자열이 npm dist-tag인지 판별 (latest, next, canary 등)
+/// semver 제약이 아닌 bare word를 dist-tag로 인식
+pub fn is_dist_tag(s: String) -> Bool {
+  let s = string.trim(s)
+  case s {
+    // 빈 문자열, 와일드카드는 제약
+    "" | "*" -> False
+    _ ->
+      // 연산자로 시작하면 제약
+      case
+        string.starts_with(s, "^")
+        || string.starts_with(s, "~")
+        || string.starts_with(s, ">")
+        || string.starts_with(s, "<")
+        || string.starts_with(s, "=")
+      {
+        True -> False
+        False ->
+          // 공백 포함이면 범위 제약
+          case string.contains(s, " ") {
+            True -> False
+            False ->
+              // 버전 파싱 성공이면 제약
+              case parse_version(s) {
+                Ok(_) -> False
+                Error(_) -> True
+              }
+          }
+      }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 통합 제약 조건 파싱 (hex + npm 문법 모두 수용)
 // ---------------------------------------------------------------------------
 

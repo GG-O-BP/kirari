@@ -14,10 +14,14 @@ import kirari/types.{
 import simplifile
 import tom.{type Toml}
 
+/// 현재 lockfile 스키마 버전
+pub const lock_version = 2
+
 /// lockfile 모듈 전용 에러 타입
 pub type LockfileError {
   FileNotFound(path: String)
   ParseError(detail: String)
+  UnsupportedLockVersion(version: Int, max_supported: Int)
   FrozenMismatch(detail: String)
   WriteError(path: String, detail: String)
 }
@@ -36,7 +40,7 @@ pub fn read(directory: String) -> Result(KirLock, LockfileError) {
   parse(content)
 }
 
-/// kir.lock 문자열을 파싱
+/// kir.lock 문자열을 파싱 (버전 마이그레이션 포함)
 pub fn parse(content: String) -> Result(KirLock, LockfileError) {
   use doc <- result.try(
     tom.parse(content)
@@ -46,8 +50,22 @@ pub fn parse(content: String) -> Result(KirLock, LockfileError) {
     tom.get_int(doc, ["version"])
     |> result.map_error(fn(_) { ParseError("missing version field") }),
   )
+  // 버전 검증 및 마이그레이션
+  use _ <- result.try(case version > lock_version {
+    True -> Error(UnsupportedLockVersion(version, lock_version))
+    False -> Ok(Nil)
+  })
   let packages = decode_packages(doc)
-  Ok(KirLock(version: version, packages: packages))
+  let config_fingerprint = case tom.get_string(doc, ["config-fingerprint"]) {
+    Ok(fp) -> Ok(fp)
+    Error(_) -> Error(Nil)
+  }
+  // 마이그레이션 후 항상 현재 버전으로 반환
+  Ok(KirLock(
+    version: lock_version,
+    packages: packages,
+    config_fingerprint: config_fingerprint,
+  ))
 }
 
 fn decode_packages(doc: Dict(String, Toml)) -> List(ResolvedPackage) {
@@ -79,6 +97,7 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
         tom.get_bool(table, ["has_scripts"]) |> result.unwrap(False)
       let platform = decode_platform(table)
       let license = tom.get_string(table, ["license"]) |> result.unwrap("")
+      let dev = tom.get_bool(table, ["dev"]) |> result.unwrap(False)
       Ok(ResolvedPackage(
         name: name,
         version: version,
@@ -87,6 +106,7 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
         has_scripts: has_scripts,
         platform: platform,
         license: license,
+        dev: dev,
       ))
     }
     _ -> Error(Nil)
@@ -141,21 +161,26 @@ pub fn write(lock: KirLock, directory: String) -> Result(Nil, LockfileError) {
 /// KirLock을 결정론적 TOML 문자열로 직렬화 (verify_frozen과 호환)
 pub fn encode(lock: KirLock) -> String {
   let header = "version = " <> int.to_string(lock.version) <> "\n"
+  let fp_line = case lock.config_fingerprint {
+    Ok(fp) -> "config-fingerprint = " <> quote(fp) <> "\n"
+    Error(_) -> ""
+  }
   let sorted = list.sort(lock.packages, types.compare_packages)
   let package_blocks =
     list.map(sorted, encode_package)
     |> string.join("\n")
   case sorted {
-    [] -> header
-    _ -> header <> "\n" <> package_blocks
+    [] -> header <> fp_line
+    _ -> header <> fp_line <> "\n" <> package_blocks
   }
 }
 
 fn encode_package(pkg: ResolvedPackage) -> String {
-  // 필드를 사전순: cpu, has_scripts, license, name, os, registry, sha256, version
+  // 필드를 사전순: cpu, dev, has_scripts, license, name, os, registry, sha256, version
   let base =
     "[[package]]\n"
     <> encode_platform_cpu(pkg.platform)
+    <> encode_dev(pkg.dev)
     <> encode_has_scripts(pkg.has_scripts)
     <> encode_license(pkg.license)
     <> "name = "
@@ -178,6 +203,13 @@ fn encode_license(license: String) -> String {
   case license {
     "" -> ""
     l -> "license = " <> quote(l) <> "\n"
+  }
+}
+
+fn encode_dev(dev: Bool) -> String {
+  case dev {
+    True -> "dev = true\n"
+    False -> ""
   }
 }
 
@@ -218,7 +250,23 @@ fn quote(s: String) -> String {
 
 /// 패키지 목록에서 KirLock 생성 (사전순 정렬)
 pub fn from_packages(packages: List(ResolvedPackage)) -> KirLock {
-  KirLock(version: 1, packages: list.sort(packages, types.compare_packages))
+  KirLock(
+    version: lock_version,
+    packages: list.sort(packages, types.compare_packages),
+    config_fingerprint: Error(Nil),
+  )
+}
+
+/// 패키지 목록 + config fingerprint로 KirLock 생성
+pub fn from_packages_with_fingerprint(
+  packages: List(ResolvedPackage),
+  fingerprint: String,
+) -> KirLock {
+  KirLock(
+    version: lock_version,
+    packages: list.sort(packages, types.compare_packages),
+    config_fingerprint: Ok(fingerprint),
+  )
 }
 
 /// lock에서 지정된 패키지를 제거 (선택적 업데이트용)

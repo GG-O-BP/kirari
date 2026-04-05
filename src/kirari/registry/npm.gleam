@@ -1,6 +1,6 @@
 //// npm 레지스트리 API 클라이언트
 
-import gleam/dict
+import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/http/request
 import gleam/httpc
@@ -9,6 +9,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/platform
+import kirari/registry/cache
 import kirari/security
 import simplifile
 
@@ -54,28 +55,64 @@ pub type NpmSignature {
   NpmSignature(keyid: String, sig: String)
 }
 
+/// 버전 목록 + dist-tags 통합 결과
+pub type NpmVersionsResult {
+  NpmVersionsResult(
+    versions: List(NpmPackageVersion),
+    dist_tags: Dict(String, String),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // API 호출
 // ---------------------------------------------------------------------------
 
 /// 패키지의 모든 버전 정보를 npm registry에서 조회
 pub fn get_versions(name: String) -> Result(List(NpmPackageVersion), NpmError) {
+  use result <- result.try(get_versions_with_tags(name))
+  Ok(result.versions)
+}
+
+/// 패키지의 모든 버전 정보 + dist-tags를 npm registry에서 조회
+pub fn get_versions_with_tags(
+  name: String,
+) -> Result(NpmVersionsResult, NpmError) {
+  get_versions_with_tags_opts(name, False)
+}
+
+/// skip_cache=True면 캐시 무시 (kir update용)
+pub fn get_versions_with_tags_opts(
+  name: String,
+  skip_cache: Bool,
+) -> Result(NpmVersionsResult, NpmError) {
   let encoded_name = encode_package_name(name)
   let url = "https://registry.npmjs.org/" <> encoded_name
-  use req <- result.try(
-    request.to(url)
-    |> result.map_error(fn(_) { NetworkError("invalid URL: " <> url) }),
-  )
-  let req =
-    request.set_header(req, "accept", "application/vnd.npm.install-v1+json")
   use resp <- result.try(
-    httpc.send(req)
-    |> result.map_error(fn(e) { NetworkError(string.inspect(e)) }),
+    cache.fetch_cached(
+      url,
+      [#("accept", "application/vnd.npm.install-v1+json")],
+      skip_cache,
+    )
+    |> result.map_error(fn(e) {
+      case string.starts_with(e, "not found") {
+        True -> PackageNotFound(name)
+        False -> NetworkError(e)
+      }
+    }),
   )
-  case resp.status {
-    200 -> parse_versions_response(resp.body)
-    404 -> Error(PackageNotFound(name))
-    status -> Error(ApiError(status, resp.body))
+  parse_versions_response_with_tags(cache.response_body(resp))
+}
+
+/// 오프라인 모드: 캐시에서만 버전 조회
+pub fn get_versions_with_tags_offline(
+  name: String,
+) -> Result(NpmVersionsResult, NpmError) {
+  let encoded_name = encode_package_name(name)
+  let url = "https://registry.npmjs.org/" <> encoded_name
+  case cache.fetch_offline(url) {
+    Ok(body) -> parse_versions_response_with_tags(body)
+    Error(_) ->
+      Error(NetworkError("offline: " <> name <> " not in registry cache"))
   }
 }
 
@@ -126,6 +163,14 @@ pub fn encode_package_name(name: String) -> String {
 pub fn parse_versions_response(
   body: String,
 ) -> Result(List(NpmPackageVersion), NpmError) {
+  use r <- result.try(parse_versions_response_with_tags(body))
+  Ok(r.versions)
+}
+
+/// npm registry 응답 JSON에서 버전 목록 + dist-tags 파싱
+pub fn parse_versions_response_with_tags(
+  body: String,
+) -> Result(NpmVersionsResult, NpmError) {
   let decoder = {
     use versions <- decode.field(
       "versions",
@@ -136,15 +181,20 @@ pub fn parse_versions_response(
       dict.new(),
       decode.dict(decode.string, decode.string),
     )
-    decode.success(#(versions, time))
+    use dist_tags <- decode.optional_field(
+      "dist-tags",
+      dict.new(),
+      decode.dict(decode.string, decode.string),
+    )
+    decode.success(#(versions, time, dist_tags))
   }
 
-  use #(versions, time) <- result.try(
+  use #(versions, time, dist_tags) <- result.try(
     json.parse(body, decoder)
     |> result.map_error(fn(e) { ParseResponseError(string.inspect(e)) }),
   )
 
-  let result =
+  let version_list =
     dict.to_list(versions)
     |> list.map(fn(entry) {
       let #(ver, v) = entry
@@ -167,7 +217,7 @@ pub fn parse_versions_response(
     })
     |> list.sort(fn(a, b) { string.compare(a.version, b.version) })
 
-  Ok(result)
+  Ok(NpmVersionsResult(versions: version_list, dist_tags: dist_tags))
 }
 
 /// version_value_decoder 중간 타입

@@ -84,6 +84,22 @@ pub fn get_env(key: String) -> Result(String, String)
 @external(erlang, "kirari_ffi", "uuid_v4")
 pub fn uuid_v4() -> String
 
+/// 터미널 폭 반환 (TTY가 아니면 80)
+@external(erlang, "kirari_ffi", "get_terminal_width")
+pub fn get_terminal_width() -> Int
+
+/// stdout이 TTY인지 확인
+@external(erlang, "kirari_ffi", "is_tty")
+pub fn is_tty() -> Bool
+
+/// 로그 레벨 설정 (persistent_term — CLI 시작 시 1회)
+@external(erlang, "kirari_ffi", "set_log_level")
+pub fn set_log_level(level: String) -> Nil
+
+/// 로그 레벨 읽기 (persistent_term)
+@external(erlang, "kirari_ffi", "get_log_level")
+pub fn get_log_level() -> String
+
 /// store 기본 경로 — KIR_STORE 환경변수 또는 ~/.kir/store
 pub fn store_base_path() -> Result(String, String) {
   case get_env("KIR_STORE") {
@@ -140,5 +156,46 @@ fn month_days(month: Int) -> Int {
     11 -> 304
     12 -> 334
     _ -> 0
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 런타임 버전 감지
+// ---------------------------------------------------------------------------
+
+/// Gleam 버전 감지 — "gleam --version" 출력에서 추출
+pub fn detect_gleam_version() -> Result(String, String) {
+  use output <- result.try(
+    run_command("gleam --version")
+    |> result.map_error(fn(e) { e.1 }),
+  )
+  let trimmed = string.trim(output)
+  // "gleam 1.10.0" 형식
+  case string.split(trimmed, " ") {
+    [_, version, ..] -> Ok(version)
+    [version] -> Ok(version)
+    _ -> Error("unexpected gleam --version output: " <> trimmed)
+  }
+}
+
+/// Erlang/OTP 버전 감지 — erl -eval로 otp_release 추출
+pub fn detect_erlang_version() -> Result(String, String) {
+  run_command(
+    "erl -eval \"io:format(\\\"~s\\\", [erlang:system_info(otp_release)]),halt().\" -noshell",
+  )
+  |> result.map(string.trim)
+  |> result.map_error(fn(e) { e.1 })
+}
+
+/// Node.js 버전 감지 — "node --version" 출력에서 v prefix 제거
+pub fn detect_node_version() -> Result(String, String) {
+  use output <- result.try(
+    run_command("node --version")
+    |> result.map_error(fn(e) { e.1 }),
+  )
+  let trimmed = string.trim(output)
+  case string.starts_with(trimmed, "v") {
+    True -> Ok(string.drop_start(trimmed, 1))
+    False -> Ok(trimmed)
   }
 }

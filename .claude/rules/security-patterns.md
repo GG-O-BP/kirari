@@ -7,6 +7,7 @@ paths:
   - "src/kirari/store.gleam"
   - "src/kirari/tarball.gleam"
   - "src/kirari/installer.gleam"
+  - "src/kirari/resolver/conflict.gleam"
 ---
 
 # 공급망 보안
@@ -60,6 +61,16 @@ paths:
 - violates: OR면 전부 금지여야, AND면 하나라도 금지면
 - case-insensitive 비교 (레지스트리 대소문자 불일치 대응)
 - MissingLicense, UnparsableLicense 경고 처리
+
+## 패키지 무결성 매니페스트
+- store_package 시 .kir-manifest 파일 자동 생성 (패키지 디렉토리 내)
+- 포맷: `sha256hex  relative/path/to/file` (줄 단위, 경로 정렬)
+- .kir-manifest 자체는 매니페스트에 포함되지 않음
+- `kir store verify` — Level 3 (full): 모든 파일 SHA256 재계산 비교
+- `kir store verify --quick` — Level 2: 매니페스트 존재 + 파일 수 일치만 확인
+- `kir install --verify` — 설치된 패키지에 대해 verify_full 수행
+- VerifyResult: VerifyOk(file_count) | VerifyCorrupted(mismatched, missing, extra) | VerifyNoManifest
+- 구 store (매니페스트 없음) → VerifyNoManifest 반환, "kir install로 재생성" 안내
 
 ## 파일 안전
 - tarball 추출 시 path traversal 거부 (../../)

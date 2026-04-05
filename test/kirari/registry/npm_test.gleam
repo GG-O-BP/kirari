@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/list
 import gleeunit
 import kirari/registry/npm
@@ -92,4 +93,64 @@ pub fn parse_no_time_field_test() {
   let assert Ok(versions) = npm.parse_versions_response(json)
   let assert Ok(v) = list.first(versions)
   assert v.published_at == ""
+}
+
+// ---------------------------------------------------------------------------
+// dist-tags 파싱 테스트
+// ---------------------------------------------------------------------------
+
+fn mock_npm_response_with_tags() -> String {
+  "{
+  \"dist-tags\": {
+    \"latest\": \"1.1.0\",
+    \"next\": \"2.0.0-beta.1\"
+  },
+  \"versions\": {
+    \"1.0.0\": {
+      \"dist\": {\"tarball\": \"https://example.com/foo-1.0.0.tgz\"}
+    },
+    \"1.1.0\": {
+      \"dist\": {\"tarball\": \"https://example.com/foo-1.1.0.tgz\"}
+    },
+    \"2.0.0-beta.1\": {
+      \"dist\": {\"tarball\": \"https://example.com/foo-2.0.0-beta.1.tgz\"}
+    }
+  }
+}"
+}
+
+pub fn parse_dist_tags_test() {
+  let assert Ok(result) =
+    npm.parse_versions_response_with_tags(mock_npm_response_with_tags())
+  assert dict.get(result.dist_tags, "latest") == Ok("1.1.0")
+  assert dict.get(result.dist_tags, "next") == Ok("2.0.0-beta.1")
+  assert list.length(result.versions) == 3
+}
+
+pub fn parse_no_dist_tags_field_test() {
+  let json =
+    "{
+  \"versions\": {
+    \"1.0.0\": {
+      \"dist\": {\"tarball\": \"https://example.com/foo.tgz\"}
+    }
+  }
+}"
+  let assert Ok(result) = npm.parse_versions_response_with_tags(json)
+  assert result.dist_tags == dict.new()
+  assert list.length(result.versions) == 1
+}
+
+pub fn parse_dist_tags_empty_test() {
+  let json =
+    "{
+  \"dist-tags\": {},
+  \"versions\": {
+    \"1.0.0\": {
+      \"dist\": {\"tarball\": \"https://example.com/foo.tgz\"}
+    }
+  }
+}"
+  let assert Ok(result) = npm.parse_versions_response_with_tags(json)
+  assert result.dist_tags == dict.new()
 }

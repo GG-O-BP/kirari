@@ -8,6 +8,7 @@ import gleam/json
 import gleam/list
 import gleam/result
 import gleam/string
+import kirari/registry/cache
 import kirari/security
 
 /// Hex 레지스트리 에러 타입
@@ -40,21 +41,25 @@ pub type VersionDependency {
 /// 패키지의 모든 버전 정보를 Hex API에서 조회
 /// 개별 release API를 사용하여 requirements를 포함
 pub fn get_versions(name: String) -> Result(List(PackageVersion), HexError) {
+  get_versions_with_opts(name, False)
+}
+
+/// skip_cache=True면 캐시 무시 (kir update용)
+pub fn get_versions_with_opts(
+  name: String,
+  skip_cache: Bool,
+) -> Result(List(PackageVersion), HexError) {
   let url = "https://hex.pm/api/packages/" <> name
-  use req <- result.try(
-    request.to(url)
-    |> result.map_error(fn(_) { NetworkError("invalid URL: " <> url) }),
-  )
-  let req = request.set_header(req, "accept", "application/json")
   use resp <- result.try(
-    httpc.send(req)
-    |> result.map_error(fn(e) { NetworkError(string.inspect(e)) }),
+    cache.fetch_cached(url, [#("accept", "application/json")], skip_cache)
+    |> result.map_error(fn(e) {
+      case string.starts_with(e, "not found") {
+        True -> PackageNotFound(name)
+        False -> NetworkError(e)
+      }
+    }),
   )
-  case resp.status {
-    200 -> parse_versions_response(resp.body)
-    404 -> Error(PackageNotFound(name))
-    status -> Error(ApiError(status, resp.body))
-  }
+  parse_versions_response(cache.response_body(resp))
 }
 
 /// 개별 release API 응답 (의존성 + retirement 정보)
@@ -71,20 +76,52 @@ pub fn get_release_info(
   name: String,
   version: String,
 ) -> Result(ReleaseInfo, HexError) {
+  get_release_info_with_opts(name, version, False)
+}
+
+/// skip_cache=True면 캐시 무시
+pub fn get_release_info_with_opts(
+  name: String,
+  version: String,
+  skip_cache: Bool,
+) -> Result(ReleaseInfo, HexError) {
   let url = "https://hex.pm/api/packages/" <> name <> "/releases/" <> version
-  use req <- result.try(
-    request.to(url)
-    |> result.map_error(fn(_) { NetworkError("invalid URL: " <> url) }),
-  )
-  let req = request.set_header(req, "accept", "application/json")
   use resp <- result.try(
-    httpc.send(req)
-    |> result.map_error(fn(e) { NetworkError(string.inspect(e)) }),
+    cache.fetch_cached(url, [#("accept", "application/json")], skip_cache)
+    |> result.map_error(fn(e) {
+      case string.starts_with(e, "not found") {
+        True -> PackageNotFound(name <> "@" <> version)
+        False -> NetworkError(e)
+      }
+    }),
   )
-  case resp.status {
-    200 -> parse_release_info(resp.body)
-    404 -> Error(PackageNotFound(name <> "@" <> version))
-    status -> Error(ApiError(status, resp.body))
+  parse_release_info(cache.response_body(resp))
+}
+
+/// 오프라인 모드: 캐시에서만 버전 조회
+pub fn get_versions_offline(
+  name: String,
+) -> Result(List(PackageVersion), HexError) {
+  let url = "https://hex.pm/api/packages/" <> name
+  case cache.fetch_offline(url) {
+    Ok(body) -> parse_versions_response(body)
+    Error(_) ->
+      Error(NetworkError("offline: " <> name <> " not in registry cache"))
+  }
+}
+
+/// 오프라인 모드: 캐시에서만 릴리스 정보 조회
+pub fn get_release_info_offline(
+  name: String,
+  version: String,
+) -> Result(ReleaseInfo, HexError) {
+  let url = "https://hex.pm/api/packages/" <> name <> "/releases/" <> version
+  case cache.fetch_offline(url) {
+    Ok(body) -> parse_release_info(body)
+    Error(_) ->
+      Error(NetworkError(
+        "offline: " <> name <> "@" <> version <> " not in registry cache",
+      ))
   }
 }
 

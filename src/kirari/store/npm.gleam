@@ -5,6 +5,7 @@ import gleam/result
 import kirari/platform
 import kirari/security
 import kirari/store/cas
+import kirari/store/manifest
 import kirari/store/metadata
 import kirari/store/types as store_types
 import kirari/tarball
@@ -112,7 +113,9 @@ pub fn store_package(
       // 6. 원자적 rename
       case platform.atomic_rename(tmp_dir, final_path) {
         Ok(_) -> {
-          // 7. 메타데이터 사이드카 기록
+          // 7. 무결성 매니페스트 생성
+          let _ = manifest.generate(final_path)
+          // 8. 메타데이터 사이드카 기록
           let meta_path = meta_file_path(root, expected_sha256)
           let _ = metadata.write_metadata(meta, meta_path)
           Ok(store_types.StoreResult(

@@ -3,6 +3,7 @@
 import gleam/dict
 import gleam/int
 import gleam/io
+import gleam/json
 import gleam/list
 import gleam/option
 import gleam/order
@@ -21,6 +22,7 @@ import kirari/platform
 import kirari/resolver
 import kirari/semver
 import kirari/store
+import kirari/store/manifest
 import kirari/types.{Hex, Npm}
 import simplifile
 
@@ -28,7 +30,7 @@ import simplifile
 // outdated
 // ---------------------------------------------------------------------------
 
-pub fn do_outdated(dir: String) -> Result(Nil, KirError) {
+pub fn do_outdated(dir: String, json_output: Bool) -> Result(Nil, KirError) {
   use cfg <- result.try(
     config.read_config(dir)
     |> result.map_error(ConfigErr),
@@ -76,29 +78,47 @@ pub fn do_outdated(dir: String) -> Result(Nil, KirError) {
         option.None -> Error(Nil)
       }
     })
-  case outdated {
-    [] -> {
-      io.println(output.color_green("All dependencies are up to date"))
-      Ok(Nil)
-    }
-    _ -> {
+  case json_output {
+    True -> {
       io.println(
-        output.pad_right("Package", 24)
-        <> output.pad_right("Current", 12)
-        <> output.pad_right("Latest", 12)
-        <> "Registry",
+        json.array(outdated, fn(entry) {
+          let #(name, current, latest, registry) = entry
+          json.object([
+            #("name", json.string(name)),
+            #("current", json.string(current)),
+            #("latest", json.string(latest)),
+            #("registry", json.string(registry)),
+          ])
+        })
+        |> json.to_string,
       )
-      list.each(outdated, fn(entry) {
-        let #(name, current, latest, registry) = entry
-        io.println(
-          output.pad_right(name, 24)
-          <> output.pad_right(current, 12)
-          <> output.pad_right(latest, 12)
-          <> registry,
-        )
-      })
       Ok(Nil)
     }
+    False ->
+      case outdated {
+        [] -> {
+          io.println(output.color_green("All dependencies are up to date"))
+          Ok(Nil)
+        }
+        _ -> {
+          io.println(
+            output.pad_right("Package", 24)
+            <> output.pad_right("Current", 12)
+            <> output.pad_right("Latest", 12)
+            <> "Registry",
+          )
+          list.each(outdated, fn(entry) {
+            let #(name, current, latest, registry) = entry
+            io.println(
+              output.pad_right(name, 24)
+              <> output.pad_right(current, 12)
+              <> output.pad_right(latest, 12)
+              <> registry,
+            )
+          })
+          Ok(Nil)
+        }
+      }
   }
 }
 
@@ -106,7 +126,11 @@ pub fn do_outdated(dir: String) -> Result(Nil, KirError) {
 // why
 // ---------------------------------------------------------------------------
 
-pub fn do_why(dir: String, pkg_name: String) -> Result(Nil, KirError) {
+pub fn do_why(
+  dir: String,
+  pkg_name: String,
+  json_output: Bool,
+) -> Result(Nil, KirError) {
   use cfg <- result.try(
     config.read_config(dir)
     |> result.map_error(ConfigErr),
@@ -117,18 +141,20 @@ pub fn do_why(dir: String, pkg_name: String) -> Result(Nil, KirError) {
   )
   case list.find(lock.packages, fn(p) { p.name == pkg_name }) {
     Error(_) -> {
-      io.println(pkg_name <> " is not installed")
+      case json_output {
+        True ->
+          io.println(
+            json.object([
+              #("package", json.string(pkg_name)),
+              #("installed", json.bool(False)),
+            ])
+            |> json.to_string,
+          )
+        False -> io.println(pkg_name <> " is not installed")
+      }
       Ok(Nil)
     }
     Ok(pkg) -> {
-      io.println(
-        pkg.name
-        <> "@"
-        <> pkg.version
-        <> " ("
-        <> types.registry_to_string(pkg.registry)
-        <> ")",
-      )
       let all_deps =
         list.flatten([
           cfg.hex_deps,
@@ -140,27 +166,54 @@ pub fn do_why(dir: String, pkg_name: String) -> Result(Nil, KirError) {
         list.any(all_deps, fn(d) {
           d.name == pkg_name && d.registry == pkg.registry
         })
-      case is_direct {
-        True -> {
-          let section = case pkg.registry {
-            Hex -> "[dependencies]"
-            Npm -> "[npm-dependencies]"
-          }
-          io.println("  direct dependency in " <> section)
-        }
+      let dependents = case is_direct {
+        True -> []
         False -> {
           let version_infos = case resolver.resolve_full(cfg, Ok(lock)) {
             Ok(resolve_result) -> resolve_result.version_infos
             Error(_) -> dict.new()
           }
-          let dependents =
-            resolver.find_dependents(pkg_name, version_infos, lock)
-          case dependents {
-            [] -> io.println("  (dependency chain unknown)")
-            _ ->
-              list.each(dependents, fn(dep_name) {
-                io.println("  required by " <> dep_name)
-              })
+          resolver.find_dependents(pkg_name, version_infos, lock)
+        }
+      }
+      case json_output {
+        True ->
+          io.println(
+            json.object([
+              #("package", json.string(pkg.name)),
+              #("version", json.string(pkg.version)),
+              #("registry", json.string(types.registry_to_string(pkg.registry))),
+              #("installed", json.bool(True)),
+              #("direct", json.bool(is_direct)),
+              #("dependents", json.array(dependents, json.string)),
+            ])
+            |> json.to_string,
+          )
+        False -> {
+          io.println(
+            pkg.name
+            <> "@"
+            <> pkg.version
+            <> " ("
+            <> types.registry_to_string(pkg.registry)
+            <> ")",
+          )
+          case is_direct {
+            True -> {
+              let section = case pkg.registry {
+                Hex -> "[dependencies]"
+                Npm -> "[npm-dependencies]"
+              }
+              io.println("  direct dependency in " <> section)
+            }
+            False ->
+              case dependents {
+                [] -> io.println("  (dependency chain unknown)")
+                _ ->
+                  list.each(dependents, fn(dep_name) {
+                    io.println("  required by " <> dep_name)
+                  })
+              }
           }
         }
       }
@@ -173,7 +226,7 @@ pub fn do_why(dir: String, pkg_name: String) -> Result(Nil, KirError) {
 // diff
 // ---------------------------------------------------------------------------
 
-pub fn do_diff(dir: String) -> Result(Nil, KirError) {
+pub fn do_diff(dir: String, json_output: Bool) -> Result(Nil, KirError) {
   use cfg <- result.try(config.read_config(dir) |> result.map_error(ConfigErr))
   use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
   use resolve_result <- result.try(
@@ -181,45 +234,78 @@ pub fn do_diff(dir: String) -> Result(Nil, KirError) {
     |> result.map_error(ResolveErr),
   )
   let entries = lockfile.diff(lock, resolve_result.packages)
-  case entries {
-    [] -> io.println("No changes")
-    _ ->
-      list.each(entries, fn(entry) {
-        case entry {
-          lockfile.Added(name, version, registry) ->
-            io.println(
-              output.color_green("+ ")
-              <> name
-              <> " v"
-              <> version
-              <> " ("
-              <> types.registry_to_string(registry)
-              <> ")",
-            )
-          lockfile.Removed(name, version, registry) ->
-            io.println(
-              output.color_red("- ")
-              <> name
-              <> " v"
-              <> version
-              <> " ("
-              <> types.registry_to_string(registry)
-              <> ")",
-            )
-          lockfile.Changed(name, old_version, new_version, registry) ->
-            io.println(
-              output.color_yellow("~ ")
-              <> name
-              <> " v"
-              <> old_version
-              <> " → v"
-              <> new_version
-              <> " ("
-              <> types.registry_to_string(registry)
-              <> ")",
-            )
-        }
-      })
+  case json_output {
+    True ->
+      io.println(
+        json.array(entries, fn(entry) {
+          case entry {
+            lockfile.Added(name, version, registry) ->
+              json.object([
+                #("type", json.string("added")),
+                #("name", json.string(name)),
+                #("version", json.string(version)),
+                #("registry", json.string(types.registry_to_string(registry))),
+              ])
+            lockfile.Removed(name, version, registry) ->
+              json.object([
+                #("type", json.string("removed")),
+                #("name", json.string(name)),
+                #("version", json.string(version)),
+                #("registry", json.string(types.registry_to_string(registry))),
+              ])
+            lockfile.Changed(name, old_version, new_version, registry) ->
+              json.object([
+                #("type", json.string("changed")),
+                #("name", json.string(name)),
+                #("old_version", json.string(old_version)),
+                #("new_version", json.string(new_version)),
+                #("registry", json.string(types.registry_to_string(registry))),
+              ])
+          }
+        })
+        |> json.to_string,
+      )
+    False ->
+      case entries {
+        [] -> io.println("No changes")
+        _ ->
+          list.each(entries, fn(entry) {
+            case entry {
+              lockfile.Added(name, version, registry) ->
+                io.println(
+                  output.color_green("+ ")
+                  <> name
+                  <> " v"
+                  <> version
+                  <> " ("
+                  <> types.registry_to_string(registry)
+                  <> ")",
+                )
+              lockfile.Removed(name, version, registry) ->
+                io.println(
+                  output.color_red("- ")
+                  <> name
+                  <> " v"
+                  <> version
+                  <> " ("
+                  <> types.registry_to_string(registry)
+                  <> ")",
+                )
+              lockfile.Changed(name, old_version, new_version, registry) ->
+                io.println(
+                  output.color_yellow("~ ")
+                  <> name
+                  <> " v"
+                  <> old_version
+                  <> " → v"
+                  <> new_version
+                  <> " ("
+                  <> types.registry_to_string(registry)
+                  <> ")",
+                )
+            }
+          })
+      }
   }
   Ok(Nil)
 }
@@ -228,25 +314,47 @@ pub fn do_diff(dir: String) -> Result(Nil, KirError) {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn do_ls(dir: String) -> Result(Nil, KirError) {
+pub fn do_ls(dir: String, json_output: Bool) -> Result(Nil, KirError) {
   use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
   let sorted = list.sort(lock.packages, types.compare_packages)
-  list.each(sorted, fn(p) {
-    let path = installer.install_path(p, dir)
-    let status = case simplifile.is_directory(path) {
-      Ok(True) -> "  ✓ "
-      _ -> "  ✗ "
-    }
-    io.println(
-      status
-      <> output.pad_right(p.name, 28)
-      <> output.pad_right("v" <> p.version, 12)
-      <> "("
-      <> types.registry_to_string(p.registry)
-      <> ")  "
-      <> path,
-    )
-  })
+  case json_output {
+    True ->
+      io.println(
+        json.array(sorted, fn(p) {
+          let path = installer.install_path(p, dir)
+          let installed = case simplifile.is_directory(path) {
+            Ok(True) -> True
+            _ -> False
+          }
+          json.object([
+            #("name", json.string(p.name)),
+            #("version", json.string(p.version)),
+            #("registry", json.string(types.registry_to_string(p.registry))),
+            #("sha256", json.string(p.sha256)),
+            #("path", json.string(path)),
+            #("installed", json.bool(installed)),
+          ])
+        })
+        |> json.to_string,
+      )
+    False ->
+      list.each(sorted, fn(p) {
+        let path = installer.install_path(p, dir)
+        let status = case simplifile.is_directory(path) {
+          Ok(True) -> "  ✓ "
+          _ -> "  ✗ "
+        }
+        io.println(
+          status
+          <> output.pad_right(p.name, 28)
+          <> output.pad_right("v" <> p.version, 12)
+          <> "("
+          <> types.registry_to_string(p.registry)
+          <> ")  "
+          <> path,
+        )
+      })
+  }
   Ok(Nil)
 }
 
@@ -254,50 +362,191 @@ pub fn do_ls(dir: String) -> Result(Nil, KirError) {
 // store verify
 // ---------------------------------------------------------------------------
 
-pub fn do_store_verify(dir: String) -> Result(Nil, KirError) {
+pub fn do_store_verify(
+  dir: String,
+  quick: Bool,
+  json_output: Bool,
+) -> Result(Nil, KirError) {
   use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
   let results =
     list.map(lock.packages, fn(p) {
-      let cached = case store.has_package(p.sha256, p.registry) {
-        Ok(True) -> True
+      let verify_result = case quick {
+        True -> store.verify_package_quick(p.sha256, p.registry)
+        False -> store.verify_package(p.sha256, p.registry)
+      }
+      #(p, verify_result)
+    })
+  // 결과별 출력
+  let ok_count =
+    list.count(results, fn(r) {
+      case r.1 {
+        Ok(manifest.VerifyOk(_)) -> True
         _ -> False
       }
-      #(p, cached)
     })
-  let ok_count = list.count(results, fn(r) { r.1 })
-  let missing = list.filter(results, fn(r) { !r.1 })
-  list.each(results, fn(r) {
-    let #(p, cached) = r
-    let status = case cached {
-      True -> "  ✓ "
-      False -> "  ✗ "
+  let corrupted_count =
+    list.count(results, fn(r) {
+      case r.1 {
+        Ok(manifest.VerifyCorrupted(_, _, _)) -> True
+        _ -> False
+      }
+    })
+  let no_manifest_count =
+    list.count(results, fn(r) {
+      case r.1 {
+        Ok(manifest.VerifyNoManifest) -> True
+        _ -> False
+      }
+    })
+  let error_count =
+    list.count(results, fn(r) {
+      case r.1 {
+        Error(_) -> True
+        _ -> False
+      }
+    })
+  case json_output {
+    True -> {
+      io.println(
+        json.object([
+          #("ok", json.int(ok_count)),
+          #("corrupted", json.int(corrupted_count)),
+          #("no_manifest", json.int(no_manifest_count)),
+          #("missing", json.int(error_count)),
+          #(
+            "packages",
+            json.array(results, fn(r) {
+              let #(p, verify_result) = r
+              let #(status, file_count, details) = case verify_result {
+                Ok(manifest.VerifyOk(n)) -> #("ok", n, [])
+                Ok(manifest.VerifyCorrupted(m, mi, e)) -> #(
+                  "corrupted",
+                  0,
+                  list.flatten([
+                    list.map(m, fn(f) { #("corrupted", f) }),
+                    list.map(mi, fn(f) { #("missing", f) }),
+                    list.map(e, fn(f) { #("extra", f) }),
+                  ]),
+                )
+                Ok(manifest.VerifyNoManifest) -> #("no_manifest", 0, [])
+                Error(_) -> #("missing", 0, [])
+              }
+              json.object([
+                #("name", json.string(p.name)),
+                #("version", json.string(p.version)),
+                #("registry", json.string(types.registry_to_string(p.registry))),
+                #("status", json.string(status)),
+                #("file_count", json.int(file_count)),
+                #(
+                  "issues",
+                  json.array(details, fn(d) {
+                    json.object([
+                      #("type", json.string(d.0)),
+                      #("file", json.string(d.1)),
+                    ])
+                  }),
+                ),
+              ])
+            }),
+          ),
+        ])
+        |> json.to_string,
+      )
+      Ok(Nil)
     }
-    io.println(
-      status
-      <> p.name
-      <> "@"
-      <> p.version
-      <> " ("
-      <> types.registry_to_string(p.registry)
-      <> ")",
-    )
-  })
-  io.println("")
-  case missing {
-    [] ->
+    False -> {
+      list.each(results, fn(r) {
+        let #(p, verify_result) = r
+        let pkg_label =
+          p.name
+          <> "@"
+          <> p.version
+          <> " ("
+          <> types.registry_to_string(p.registry)
+          <> ")"
+        case verify_result {
+          Ok(manifest.VerifyOk(n)) ->
+            io.println(
+              output.color_green("  ✓ ")
+              <> pkg_label
+              <> output.color_dim(
+                " — " <> int.to_string(n) <> " files verified",
+              ),
+            )
+          Ok(manifest.VerifyCorrupted(mismatched, missing, extra)) -> {
+            let detail_parts = []
+            let detail_parts = case mismatched {
+              [] -> detail_parts
+              _ -> [
+                int.to_string(list.length(mismatched)) <> " corrupted",
+                ..detail_parts
+              ]
+            }
+            let detail_parts = case missing {
+              [] -> detail_parts
+              _ -> [
+                int.to_string(list.length(missing)) <> " missing",
+                ..detail_parts
+              ]
+            }
+            let detail_parts = case extra {
+              [] -> detail_parts
+              _ -> [
+                int.to_string(list.length(extra)) <> " unexpected",
+                ..detail_parts
+              ]
+            }
+            io.println(
+              output.color_red("  ✗ ")
+              <> pkg_label
+              <> " — "
+              <> string.join(list.reverse(detail_parts), ", "),
+            )
+            // 상세 출력
+            list.each(mismatched, fn(f) {
+              io.println(output.color_red("      corrupted: ") <> f)
+            })
+            list.each(missing, fn(f) {
+              io.println(output.color_red("      missing:   ") <> f)
+            })
+            list.each(extra, fn(f) {
+              io.println(output.color_yellow("      extra:     ") <> f)
+            })
+          }
+          Ok(manifest.VerifyNoManifest) ->
+            io.println(
+              output.color_yellow("  ⚠ ")
+              <> pkg_label
+              <> output.color_dim(
+                " — no manifest (run 'kir install' to regenerate)",
+              ),
+            )
+          Error(_) ->
+            io.println(
+              output.color_red("  ✗ ") <> pkg_label <> " — not in store",
+            )
+        }
+      })
+      io.println("")
       io.println(
-        output.color_green("All")
-        <> " "
-        <> int.to_string(ok_count)
-        <> " packages verified in store",
+        "Verified: "
+        <> output.color_green(int.to_string(ok_count) <> " ok")
+        <> case corrupted_count {
+          0 -> ""
+          n -> ", " <> output.color_red(int.to_string(n) <> " corrupted")
+        }
+        <> case no_manifest_count {
+          0 -> ""
+          n -> ", " <> output.color_yellow(int.to_string(n) <> " no manifest")
+        }
+        <> case error_count {
+          0 -> ""
+          n -> ", " <> output.color_red(int.to_string(n) <> " missing")
+        },
       )
-    _ ->
-      io.println(
-        output.color_red(int.to_string(list.length(missing)))
-        <> " packages missing from store. Run 'kir install' to restore.",
-      )
+      Ok(Nil)
+    }
   }
-  Ok(Nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +603,7 @@ pub fn do_doctor(dir: String) -> Nil {
 // license
 // ---------------------------------------------------------------------------
 
-pub fn do_license(dir: String) -> Result(Nil, KirError) {
+pub fn do_license(dir: String, json_output: Bool) -> Result(Nil, KirError) {
   use cfg <- result.try(config.read_config(dir) |> result.map_error(ConfigErr))
   use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
   let packages =
@@ -366,94 +615,153 @@ pub fn do_license(dir: String) -> Result(Nil, KirError) {
         license_expression: p.license,
       )
     })
-  // 라이선스별 그룹 출력
   let groups = license.group_by_license(packages)
-  io.println("Dependency Licenses:")
-  io.println("")
-  list.each(groups, fn(group) {
-    let #(lic, pkgs) = group
-    let label = case lic {
-      "" -> "(unknown)"
-      l -> l
-    }
-    io.println("  " <> output.color_green(label))
-    list.each(pkgs, fn(p) {
-      io.println(
-        "    " <> p.name <> "@" <> p.version <> " (" <> p.registry <> ")",
-      )
-    })
-  })
-  // 정책 검사
   let violations = license.check(packages, cfg.security.license_policy)
-  io.println("")
-  case violations {
-    [] -> {
+  case json_output {
+    True -> {
       io.println(
-        output.color_green("All")
-        <> " "
-        <> int.to_string(list.length(packages))
-        <> " packages comply with license policy",
+        json.object([
+          #(
+            "packages",
+            json.array(packages, fn(p) {
+              json.object([
+                #("name", json.string(p.name)),
+                #("version", json.string(p.version)),
+                #("registry", json.string(p.registry)),
+                #("license", json.string(p.license_expression)),
+              ])
+            }),
+          ),
+          #(
+            "violations",
+            json.array(violations, fn(v) {
+              case v {
+                license.DeniedLicense(name, ver, reg, lic, _) ->
+                  json.object([
+                    #("type", json.string("denied")),
+                    #("name", json.string(name)),
+                    #("version", json.string(ver)),
+                    #("registry", json.string(reg)),
+                    #("license", json.string(lic)),
+                  ])
+                license.NotAllowed(name, ver, reg, lic, _) ->
+                  json.object([
+                    #("type", json.string("not_allowed")),
+                    #("name", json.string(name)),
+                    #("version", json.string(ver)),
+                    #("registry", json.string(reg)),
+                    #("license", json.string(lic)),
+                  ])
+                license.MissingLicense(name, ver, reg) ->
+                  json.object([
+                    #("type", json.string("missing")),
+                    #("name", json.string(name)),
+                    #("version", json.string(ver)),
+                    #("registry", json.string(reg)),
+                  ])
+                license.UnparsableLicense(name, ver, reg, raw, _) ->
+                  json.object([
+                    #("type", json.string("unparsable")),
+                    #("name", json.string(name)),
+                    #("version", json.string(ver)),
+                    #("registry", json.string(reg)),
+                    #("raw", json.string(raw)),
+                  ])
+              }
+            }),
+          ),
+        ])
+        |> json.to_string,
       )
       Ok(Nil)
     }
-    _ -> {
-      io.println(output.color_red("License violations found:"))
-      list.each(violations, fn(v) {
-        case v {
-          license.DeniedLicense(name, ver, reg, lic, _) ->
-            io.println(
-              "  "
-              <> output.color_red("DENIED")
-              <> " "
-              <> name
-              <> "@"
-              <> ver
-              <> " ("
-              <> reg
-              <> ") — "
-              <> lic,
-            )
-          license.NotAllowed(name, ver, reg, lic, _) ->
-            io.println(
-              "  "
-              <> output.color_red("NOT ALLOWED")
-              <> " "
-              <> name
-              <> "@"
-              <> ver
-              <> " ("
-              <> reg
-              <> ") — "
-              <> lic,
-            )
-          license.MissingLicense(name, ver, reg) ->
-            io.println(
-              "  "
-              <> output.color_yellow("MISSING")
-              <> " "
-              <> name
-              <> "@"
-              <> ver
-              <> " ("
-              <> reg
-              <> ")",
-            )
-          license.UnparsableLicense(name, ver, reg, raw, _) ->
-            io.println(
-              "  "
-              <> output.color_yellow("UNPARSABLE")
-              <> " "
-              <> name
-              <> "@"
-              <> ver
-              <> " ("
-              <> reg
-              <> ") — "
-              <> raw,
-            )
+    False -> {
+      io.println("Dependency Licenses:")
+      io.println("")
+      list.each(groups, fn(group) {
+        let #(lic, pkgs) = group
+        let label = case lic {
+          "" -> "(unknown)"
+          l -> l
         }
+        io.println("  " <> output.color_green(label))
+        list.each(pkgs, fn(p) {
+          io.println(
+            "    " <> p.name <> "@" <> p.version <> " (" <> p.registry <> ")",
+          )
+        })
       })
-      Ok(Nil)
+      io.println("")
+      case violations {
+        [] -> {
+          io.println(
+            output.color_green("All")
+            <> " "
+            <> int.to_string(list.length(packages))
+            <> " packages comply with license policy",
+          )
+          Ok(Nil)
+        }
+        _ -> {
+          io.println(output.color_red("License violations found:"))
+          list.each(violations, fn(v) {
+            case v {
+              license.DeniedLicense(name, ver, reg, lic, _) ->
+                io.println(
+                  "  "
+                  <> output.color_red("DENIED")
+                  <> " "
+                  <> name
+                  <> "@"
+                  <> ver
+                  <> " ("
+                  <> reg
+                  <> ") — "
+                  <> lic,
+                )
+              license.NotAllowed(name, ver, reg, lic, _) ->
+                io.println(
+                  "  "
+                  <> output.color_red("NOT ALLOWED")
+                  <> " "
+                  <> name
+                  <> "@"
+                  <> ver
+                  <> " ("
+                  <> reg
+                  <> ") — "
+                  <> lic,
+                )
+              license.MissingLicense(name, ver, reg) ->
+                io.println(
+                  "  "
+                  <> output.color_yellow("MISSING")
+                  <> " "
+                  <> name
+                  <> "@"
+                  <> ver
+                  <> " ("
+                  <> reg
+                  <> ")",
+                )
+              license.UnparsableLicense(name, ver, reg, raw, _) ->
+                io.println(
+                  "  "
+                  <> output.color_yellow("UNPARSABLE")
+                  <> " "
+                  <> name
+                  <> "@"
+                  <> ver
+                  <> " ("
+                  <> reg
+                  <> ") — "
+                  <> raw,
+                )
+            }
+          })
+          Ok(Nil)
+        }
+      }
     }
   }
 }

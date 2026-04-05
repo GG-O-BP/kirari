@@ -349,3 +349,51 @@ pub fn unified_hex_exact_test() {
   assert semver.satisfies(v1, c) == True
   assert semver.satisfies(v2, c) == False
 }
+
+// ---------------------------------------------------------------------------
+// is_dist_tag
+// ---------------------------------------------------------------------------
+
+pub fn is_dist_tag_latest_test() {
+  assert semver.is_dist_tag("latest") == True
+}
+
+pub fn is_dist_tag_next_test() {
+  assert semver.is_dist_tag("next") == True
+}
+
+pub fn is_dist_tag_canary_test() {
+  assert semver.is_dist_tag("canary") == True
+}
+
+pub fn is_dist_tag_beta_test() {
+  assert semver.is_dist_tag("beta") == True
+}
+
+pub fn is_dist_tag_caret_constraint_test() {
+  assert semver.is_dist_tag("^1.0.0") == False
+}
+
+pub fn is_dist_tag_tilde_constraint_test() {
+  assert semver.is_dist_tag("~1.0.0") == False
+}
+
+pub fn is_dist_tag_gte_constraint_test() {
+  assert semver.is_dist_tag(">= 1.0.0") == False
+}
+
+pub fn is_dist_tag_version_number_test() {
+  assert semver.is_dist_tag("1.0.0") == False
+}
+
+pub fn is_dist_tag_wildcard_test() {
+  assert semver.is_dist_tag("*") == False
+}
+
+pub fn is_dist_tag_empty_test() {
+  assert semver.is_dist_tag("") == False
+}
+
+pub fn is_dist_tag_range_constraint_test() {
+  assert semver.is_dist_tag(">= 1.0.0 and < 2.0.0") == False
+}
