@@ -48,6 +48,10 @@ fn base_config() -> KirConfig {
     overrides: [],
     engines: types.default_engines_config(),
     download: types.default_download_config(),
+    git_deps: [],
+    git_dev_deps: [],
+    url_deps: [],
+    url_dev_deps: [],
   )
 }
 

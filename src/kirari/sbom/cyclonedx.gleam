@@ -137,10 +137,7 @@ fn dependency_entry(
   let child_purls = case dict.get(version_infos, key) {
     Ok(vi) ->
       list.map(vi.dependencies, fn(d) {
-        let child_reg = case d.registry {
-          Hex -> "hex"
-          Npm -> "npm"
-        }
+        let child_reg = types.registry_to_string(d.registry)
         let child_key = d.name <> ":" <> child_reg
         case dict.get(version_infos, child_key) {
           Ok(child_vi) ->
@@ -171,5 +168,7 @@ fn make_purl(name: String, version: String, registry: types.Registry) -> String 
       }
       "pkg:npm/" <> encoded <> "@" <> version
     }
+    types.Git -> "pkg:generic/" <> name <> "@" <> version <> "?vcs_url=git"
+    types.Url -> "pkg:generic/" <> name <> "@" <> version <> "?download_url=url"
   }
 }

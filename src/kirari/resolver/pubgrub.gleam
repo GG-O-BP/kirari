@@ -755,7 +755,7 @@ fn extract_solution(state: SolverState, ctx: SolverContext) -> SolveResult {
             Ok(#(name, registry)) -> {
               let version_str = semver.to_string(version)
               let vi = find_version_info(state, key, version_str)
-              let pkg_name_val = case dict.get(ctx.alias_map, key) {
+              let pkg_name_result = case dict.get(ctx.alias_map, key) {
                 Ok(real) -> Ok(real)
                 Error(_) -> Error(Nil)
               }
@@ -769,7 +769,9 @@ fn extract_solution(state: SolverState, ctx: SolverContext) -> SolveResult {
                   platform: Error(Nil),
                   license: vi.license,
                   dev: False,
-                  package_name: pkg_name_val,
+                  package_name: pkg_name_result,
+                  git_source: Error(Nil),
+                  url_source: Error(Nil),
                 )
               // lock에서 sha256 복원
               let pkg = case ctx.existing_lock {
@@ -877,6 +879,7 @@ fn parse_dep_range(dep: Dependency) -> semver.VersionRange {
   let constraint = case dep.registry {
     Hex -> semver.parse_hex_constraint(dep.version_constraint)
     Npm -> semver.parse_npm_constraint(dep.version_constraint)
+    types.Git | types.Url -> semver.parse_hex_constraint(">= 0.0.0")
   }
   case constraint {
     Ok(c) -> semver.constraint_to_range(c)
@@ -899,7 +902,7 @@ fn make_root_version() -> Version {
 
 fn matches_platform(vi: VersionInfoCompact, registry: Registry) -> Bool {
   case registry {
-    Hex -> True
+    Hex | types.Git | types.Url -> True
     Npm ->
       check_platform_list(vi.os, get_platform_os())
       && check_platform_list(vi.cpu, get_platform_arch())

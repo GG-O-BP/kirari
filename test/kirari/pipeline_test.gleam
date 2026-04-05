@@ -34,6 +34,8 @@ pub fn run_skips_cached_packages_test() {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     )
   let resolve_result =
     ResolveResult(packages: [pkg], version_infos: dict.new(), peer_warnings: [])

@@ -254,6 +254,10 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
     overrides: [],
     engines: types.default_engines_config(),
     download: types.default_download_config(),
+    git_deps: [],
+    git_dev_deps: [],
+    url_deps: [],
+    url_dev_deps: [],
   )
 }
 
@@ -370,6 +374,8 @@ pub fn resolve_prefers_lock_test() {
         license: "",
         dev: False,
         package_name: Error(Nil),
+        git_source: Error(Nil),
+        url_source: Error(Nil),
       ),
     ])
   let assert Ok(resolved) = resolver.resolve_with(config, Ok(lock), mock_fetch)

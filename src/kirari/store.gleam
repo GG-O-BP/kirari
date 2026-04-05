@@ -5,11 +5,13 @@
 import gleam/list
 import gleam/result
 import kirari/platform
+import kirari/store/git as git_store
 import kirari/store/hex as hex_store
 import kirari/store/manifest
 import kirari/store/npm as npm_store
 import kirari/store/types as store_types
-import kirari/types.{type Registry, Hex, Npm}
+import kirari/store/url as url_store
+import kirari/types.{type Registry, Git, Hex, Npm, Url}
 import simplifile
 
 // 타입 re-export (기존 호출부 호환)
@@ -50,6 +52,8 @@ pub fn has_package(
   case registry {
     Hex -> hex_store.has_package(sha256)
     Npm -> npm_store.has_package(sha256)
+    Git -> git_store.has_package(sha256)
+    Url -> url_store.has_package(sha256)
   }
 }
 
@@ -61,6 +65,8 @@ pub fn package_path(
   case registry {
     Hex -> hex_store.package_path(sha256)
     Npm -> npm_store.package_path(sha256)
+    Git -> git_store.package_path(sha256)
+    Url -> url_store.package_path(sha256)
   }
 }
 
@@ -79,7 +85,22 @@ pub fn store_package(
   case registry {
     Hex -> hex_store.store_package(data, expected_sha256, name, version)
     Npm -> npm_store.store_package(data, expected_sha256, name, version)
+    Url -> url_store.store_package(data, expected_sha256, name, version)
+    Git ->
+      Error(store_types.IoError(
+        "use store_git_package for Git registry packages",
+      ))
   }
+}
+
+/// Git clone 디렉토리를 저장소에 저장
+pub fn store_git_package(
+  src_dir: String,
+  content_sha256: String,
+  name: String,
+  version: String,
+) -> Result(StoreResult, StoreError) {
+  git_store.store_from_directory(src_dir, content_sha256, name, version)
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +146,8 @@ pub fn count_entries(registry: Registry) -> Int {
       let path = case registry {
         Hex -> base <> "/hex"
         Npm -> base <> "/npm"
+        Git -> base <> "/git"
+        Url -> base <> "/url"
       }
       count_entries_in(path)
     }

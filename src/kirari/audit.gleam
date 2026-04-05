@@ -143,6 +143,9 @@ pub fn match_package(
         let constraint_result = case a.registry {
           Hex -> semver.parse_hex_constraint(a.vulnerable_range)
           Npm -> semver.parse_npm_constraint(a.vulnerable_range)
+          // Git/Url 패키지는 레지스트리 advisory가 없으므로 skip
+          types.Git | types.Url ->
+            Error(semver.InvalidConstraint("not applicable"))
         }
         case constraint_result {
           Ok(constraint) ->

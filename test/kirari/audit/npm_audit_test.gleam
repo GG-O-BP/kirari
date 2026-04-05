@@ -19,6 +19,8 @@ pub fn build_request_body_single_test() {
       license: "MIT",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
   ]
   let body = npm_audit.build_request_body(packages)
@@ -38,6 +40,8 @@ pub fn build_request_body_multiple_test() {
       license: "MIT",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
     ResolvedPackage(
       name: "esbuild",
@@ -49,6 +53,8 @@ pub fn build_request_body_multiple_test() {
       license: "MIT",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
   ]
   let body = npm_audit.build_request_body(packages)
@@ -68,6 +74,8 @@ pub fn build_request_body_scoped_test() {
       license: "MIT",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
   ]
   let body = npm_audit.build_request_body(packages)

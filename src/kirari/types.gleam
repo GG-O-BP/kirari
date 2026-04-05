@@ -11,6 +11,8 @@ import gleam/string
 pub type Registry {
   Hex
   Npm
+  Git
+  Url
 }
 
 /// Registry를 문자열로 변환
@@ -18,6 +20,8 @@ pub fn registry_to_string(registry: Registry) -> String {
   case registry {
     Hex -> "hex"
     Npm -> "npm"
+    Git -> "git"
+    Url -> "url"
   }
 }
 
@@ -26,8 +30,50 @@ pub fn registry_from_string(s: String) -> Result(Registry, Nil) {
   case string.lowercase(s) {
     "hex" -> Ok(Hex)
     "npm" -> Ok(Npm)
+    "git" -> Ok(Git)
+    "url" -> Ok(Url)
     _ -> Error(Nil)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Git / URL 소스 타입
+// ---------------------------------------------------------------------------
+
+/// Git 레포지토리 소스 정보
+pub type GitSource {
+  GitSource(
+    /// Git 레포지토리 URL (HTTPS/HTTP만 허용)
+    url: String,
+    /// 사용자 지정 ref (branch 이름, tag 이름, 또는 commit SHA)
+    ref: String,
+    /// resolve 후 확정된 40자 commit SHA
+    resolved_ref: String,
+    /// 사용자가 tag = "v1.0.0" 형식으로 지정한 경우
+    tag: Result(String, Nil),
+    /// monorepo 서브디렉토리 (예: "packages/lib")
+    subdir: Result(String, Nil),
+  )
+}
+
+/// Tarball URL 소스 정보
+pub type UrlSource {
+  UrlSource(
+    /// tarball 다운로드 URL
+    url: String,
+    /// 사용자가 선언한 SHA256 해시 (보안 검증용)
+    sha256: String,
+  )
+}
+
+/// gleam.toml [git-dependencies]에 선언된 Git 의존성
+pub type GitDep {
+  GitDep(name: String, source: GitSource, dev: Bool)
+}
+
+/// gleam.toml [url-dependencies]에 선언된 URL 의존성
+pub type UrlDep {
+  UrlDep(name: String, source: UrlSource, dev: Bool)
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +129,10 @@ pub type ResolvedPackage {
     dev: Bool,
     /// npm alias 시 실제 패키지 이름
     package_name: Result(String, Nil),
+    /// Git 패키지의 소스 정보 (Git registry일 때만 Ok)
+    git_source: Result(GitSource, Nil),
+    /// URL 패키지의 소스 정보 (Url registry일 때만 Ok)
+    url_source: Result(UrlSource, Nil),
   )
 }
 
@@ -238,6 +288,10 @@ pub type KirConfig {
     overrides: List(Override),
     engines: EnginesConfig,
     download: DownloadConfig,
+    git_deps: List(GitDep),
+    git_dev_deps: List(GitDep),
+    url_deps: List(UrlDep),
+    url_dev_deps: List(UrlDep),
   )
 }
 

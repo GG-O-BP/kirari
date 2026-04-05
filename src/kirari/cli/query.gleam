@@ -203,6 +203,8 @@ pub fn do_why(
               let section = case pkg.registry {
                 Hex -> "[dependencies]"
                 Npm -> "[npm-dependencies]"
+                types.Git -> "[git-dependencies]"
+                types.Url -> "[url-dependencies]"
               }
               io.println("  direct dependency in " <> section)
             }

@@ -31,6 +31,8 @@ pub fn compare_packages_by_name_test() {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     )
   let b =
     ResolvedPackage(
@@ -43,6 +45,8 @@ pub fn compare_packages_by_name_test() {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     )
   assert types.compare_packages(a, b) == order.Lt
   assert types.compare_packages(b, a) == order.Gt
@@ -61,6 +65,8 @@ pub fn compare_packages_same_name_different_registry_test() {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     )
   let npm_pkg =
     ResolvedPackage(
@@ -73,6 +79,8 @@ pub fn compare_packages_same_name_different_registry_test() {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     )
   // "hex" < "npm" 사전순
   assert types.compare_packages(hex_pkg, npm_pkg) == order.Lt

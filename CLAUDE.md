@@ -39,14 +39,16 @@ kir.toml은 존재하지 않는다.
 18. 오프라인 모드 — --offline 플래그, resolver/pipeline 전체 관통, 레지스트리 캐시에서만 해결, store 캐시에서만 설치
 19. 병렬 레지스트리 조회 — 직접 의존성 Erlang process 병렬 prefetch, PubGrub solver version_cache 워밍업
 20. 구조화된 로깅 — --verbose/--debug 플래그, persistent_term 기반 4단계 로그 (Silent/Normal/Verbose/Debug), KIR_LOG 환경변수, lazy 메시지 평가
-21. lockfile 버전 마이그레이션 — lock_version 상수(현재 2), 순차 마이그레이션 체인, 미래 버전 거부, frozen 모드 검증
+21. lockfile 버전 마이그레이션 — lock_version 상수(현재 3), 순차 마이그레이션 체인, 미래 버전 거부, frozen 모드 검증
 22. engines 필드 — gleam.toml [engines] 섹션, Gleam/Erlang/Node.js 런타임 버전 감지 + semver 제약 검증, install 전 검사
 23. 다운로드 파이프라인 설정 — DownloadConfig 타입, [security] max-retries/timeout/parallel/backoff, CLI 플래그 오버라이드, 배치 단위 병렬화
 24. 선택적 store 정리 — kir clean --store에 --dry-run/--only/--keep/--max-age, 이름 기반 GC 필터링, lockfile SHA256→name 매핑
 25. Git merge conflict 자동 해결 — kir lock resolve, merge marker 감지/제거, gleam.toml에서 재해결, diff 출력
 26. npm 패키지 alias — "npm:react@^18.0.0" 형식, Dependency/ResolvedPackage에 package_name 필드, alias-aware resolver fetch/lockfile/config
 27. kir init 템플릿 — --template=basic|advanced, apply_template 순수 함수, advanced는 ProvenanceRequire+LicenseAllow+engines
-28. 해시 핀닝 — .kir-hashes TOML ���립 해시 허용 목록, hashpin.gleam 모듈, pipeline 통합, kir hash pin/verify CLI
+28. 해시 핀닝 — .kir-hashes TOML 독립 해시 허용 목록, hashpin.gleam 모듈, pipeline 통합, kir hash pin/verify CLI
+29. Git 의존성 — [git-dependencies] / [dev-git-dependencies] 섹션, { git = "url", ref/tag = "..." } 형식, shallow clone, ref→commit SHA 해결, gleam.toml 파싱 → 전이 의존성 PubGrub 주입, ~/.kir/store/git/ CAS
+30. URL 의존성 — [url-dependencies] / [dev-url-dependencies] 섹션, { url = "...", sha256 = "..." } 형식, tarball 다운로드 + SHA256 검증, ~/.kir/store/url/ CAS
 
 ## 명령어
 
@@ -56,7 +58,9 @@ kir.toml은 존재하지 않는다.
 | `kir install [--frozen] [--exclude-newer=TS] [--offline] [--quiet] [--verify]` | Hex+npm 의존성 해결·다운로드·설치, kir.lock + manifest.toml 생성 |
 | `kir update [pkg...]` | lock 무시 전체 재해결, 또는 특정 패키지만 선택적 업데이트 |
 | `kir add <pkg[@version]> [--npm] [--dev]` | 의존성 추가 후 자동 install |
-| `kir remove <pkg> [--npm]` | 의존성 제거 후 자동 reinstall |
+| `kir add <name> --git <url> [--ref R] [--tag T] [--subdir P] [--dev]` | Git 의존성 추가 |
+| `kir add <name> --url <url> [--sha256 H] [--dev]` | URL 의존성 추가 |
+| `kir remove <pkg> [--npm] [--git] [--url]` | 의존성 제거 후 자동 reinstall |
 | `kir deps list [--json]` | 의존성 목록 출력 |
 | `kir deps download` | 의존성 다운로드 (설치 없이) |
 | `kir tree [--json]` | 전이 의존성 포함 전체 트리 출력 (resolver 실행, 순환 방지) |
@@ -86,7 +90,7 @@ kir.toml은 존재하지 않는다.
 주요 모듈: cli, config, migrate, lockfile, resolver, pipeline,
 registry/hex, registry/npm, registry/cache, tarball, installer,
 ffi, security, tree, export, types, platform, semver, spdx, license,
-completion, sbom, audit
+completion, sbom, audit, git
 
 cli 서브모듈 (책임별 분리):
 - cli.gleam — 라우터 (명령어 등록, glint 디스패치)
@@ -113,6 +117,8 @@ store 모듈 (레지스트리별 분리):
 - store/npm.gleam — npm 전용 CAS (~/.kir/store/npm/) + .meta 사이드카
 - store/metadata.gleam — npm .meta JSON 읽기/쓰기
 - store/gc.gleam — GC (Hex: 불변/never expires, npm: 90일 보존)
+- store/git.gleam — Git 전용 CAS (~/.kir/store/git/), 디렉토리 복사 기반
+- store/url.gleam — URL 전용 CAS (~/.kir/store/url/), tarball 추출 기반
 - store/manifest.gleam — 패키지 무결성 매니페스트 (.kir-manifest, 파일 단위 SHA256)
 
 ## Gleam 규칙

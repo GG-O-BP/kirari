@@ -8,14 +8,15 @@ import gleam/result
 import gleam/string
 import kirari/platform
 import kirari/types.{
-  type KirLock, type Platform, type Registry, type ResolvedPackage, Hex, KirLock,
-  Npm, Platform, ResolvedPackage,
+  type GitSource, type KirLock, type Platform, type Registry,
+  type ResolvedPackage, type UrlSource, Git, GitSource, Hex, KirLock, Npm,
+  Platform, ResolvedPackage, Url, UrlSource,
 }
 import simplifile
 import tom.{type Toml}
 
 /// 현재 lockfile 스키마 버전
-pub const lock_version = 2
+pub const lock_version = 3
 
 /// lockfile 모듈 전용 에러 타입
 pub type LockfileError {
@@ -102,6 +103,39 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
         Ok(pn) -> Ok(pn)
         Error(_) -> Error(Nil)
       }
+      // Git source 필드 (registry = "git"일 때만)
+      let git_source = case registry {
+        Git ->
+          case
+            tom.get_string(table, ["git_url"]),
+            tom.get_string(table, ["git_ref"])
+          {
+            Ok(git_url), Ok(git_ref) -> {
+              let subdir = case tom.get_string(table, ["git_subdir"]) {
+                Ok(s) -> Ok(s)
+                Error(_) -> Error(Nil)
+              }
+              Ok(GitSource(
+                url: git_url,
+                ref: "",
+                resolved_ref: git_ref,
+                tag: Error(Nil),
+                subdir: subdir,
+              ))
+            }
+            _, _ -> Error(Nil)
+          }
+        _ -> Error(Nil)
+      }
+      // URL source 필드 (registry = "url"일 때만)
+      let url_source = case registry {
+        Url ->
+          case tom.get_string(table, ["source_url"]) {
+            Ok(source_url) -> Ok(UrlSource(url: source_url, sha256: sha256))
+            Error(_) -> Error(Nil)
+          }
+        _ -> Error(Nil)
+      }
       Ok(ResolvedPackage(
         name: name,
         version: version,
@@ -112,6 +146,8 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
         license: license,
         dev: dev,
         package_name: pkg_name,
+        git_source: git_source,
+        url_source: url_source,
       ))
     }
     _ -> Error(Nil)
@@ -122,6 +158,8 @@ fn parse_registry(s: String) -> Result(Registry, Nil) {
   case string.lowercase(s) {
     "hex" -> Ok(Hex)
     "npm" -> Ok(Npm)
+    "git" -> Ok(Git)
+    "url" -> Ok(Url)
     _ -> Error(Nil)
   }
 }
@@ -181,11 +219,15 @@ pub fn encode(lock: KirLock) -> String {
 }
 
 fn encode_package(pkg: ResolvedPackage) -> String {
-  // 필드를 사전순: cpu, dev, has_scripts, license, name, os, registry, sha256, version
+  // 필드를 사전순: cpu, dev, git_ref, git_subdir, git_url, has_scripts,
+  //   license, name, os, package_name, registry, sha256, source_url, version
   let base =
     "[[package]]\n"
     <> encode_platform_cpu(pkg.platform)
     <> encode_dev(pkg.dev)
+    <> encode_git_ref(pkg.git_source)
+    <> encode_git_subdir(pkg.git_source)
+    <> encode_git_url(pkg.git_source)
     <> encode_has_scripts(pkg.has_scripts)
     <> encode_license(pkg.license)
     <> "name = "
@@ -199,10 +241,40 @@ fn encode_package(pkg: ResolvedPackage) -> String {
     <> "sha256 = "
     <> quote(pkg.sha256)
     <> "\n"
+    <> encode_source_url(pkg.url_source)
     <> "version = "
     <> quote(pkg.version)
     <> "\n"
   base
+}
+
+fn encode_git_ref(source: Result(GitSource, Nil)) -> String {
+  case source {
+    Ok(gs) if gs.resolved_ref != "" ->
+      "git_ref = " <> quote(gs.resolved_ref) <> "\n"
+    _ -> ""
+  }
+}
+
+fn encode_git_subdir(source: Result(GitSource, Nil)) -> String {
+  case source {
+    Ok(GitSource(subdir: Ok(s), ..)) -> "git_subdir = " <> quote(s) <> "\n"
+    _ -> ""
+  }
+}
+
+fn encode_git_url(source: Result(GitSource, Nil)) -> String {
+  case source {
+    Ok(gs) -> "git_url = " <> quote(gs.url) <> "\n"
+    Error(_) -> ""
+  }
+}
+
+fn encode_source_url(source: Result(UrlSource, Nil)) -> String {
+  case source {
+    Ok(us) -> "source_url = " <> quote(us.url) <> "\n"
+    Error(_) -> ""
+  }
 }
 
 fn encode_package_name_field(pn: Result(String, Nil)) -> String {

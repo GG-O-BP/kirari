@@ -564,6 +564,8 @@ fn format_one_suggestion(s: Suggestion) -> String {
       <> case reg {
         Hex -> "overrides"
         Npm -> "npm-overrides"
+        types.Git -> "git-overrides"
+        types.Url -> "url-overrides"
       }
       <> "] "
       <> pkg

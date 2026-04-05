@@ -51,6 +51,10 @@ fn test_config() -> KirConfig {
     overrides: [],
     engines: types.default_engines_config(),
     download: types.default_download_config(),
+    git_deps: [],
+    git_dev_deps: [],
+    url_deps: [],
+    url_dev_deps: [],
   )
 }
 
@@ -66,6 +70,8 @@ fn test_lock() -> KirLock {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -77,6 +83,8 @@ fn test_lock() -> KirLock {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
   ])
 }
@@ -161,6 +169,10 @@ pub fn empty_tree_test() {
       overrides: [],
       engines: types.default_engines_config(),
       download: types.default_download_config(),
+      git_deps: [],
+      git_dev_deps: [],
+      url_deps: [],
+      url_dev_deps: [],
     )
   let roots =
     tree.build(
@@ -200,6 +212,8 @@ pub fn transitive_deps_tree_test() {
         license: "",
         dev: False,
         package_name: Error(Nil),
+        git_source: Error(Nil),
+        url_source: Error(Nil),
       ),
       ResolvedPackage(
         name: "gleam_stdlib",
@@ -211,6 +225,8 @@ pub fn transitive_deps_tree_test() {
         license: "",
         dev: False,
         package_name: Error(Nil),
+        git_source: Error(Nil),
+        url_source: Error(Nil),
       ),
     ])
   let vis =

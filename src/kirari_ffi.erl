@@ -22,7 +22,9 @@
     get_terminal_width/0,
     is_tty/0,
     set_log_level/1,
-    get_log_level/0
+    get_log_level/0,
+    make_temp_dir_system/0,
+    http_get_binary/1
 ]).
 
 %% tar/tgz 압축 해제
@@ -248,6 +250,34 @@ set_log_level(Level) when is_binary(Level) ->
 get_log_level() ->
     try persistent_term:get(kir_log_level)
     catch error:badarg -> <<"normal">>
+    end.
+
+%% 시스템 임시 디렉토리에 고유 디렉토리 생성
+make_temp_dir_system() ->
+    TmpBase = case os:getenv("TMPDIR") of
+        false ->
+            case os:getenv("TEMP") of
+                false -> "/tmp";
+                T -> T
+            end;
+        T -> T
+    end,
+    Rand = integer_to_list(erlang:system_time(microsecond)) ++ "-" ++
+           integer_to_list(erlang:unique_integer([positive])),
+    Dir = TmpBase ++ "/kir-" ++ Rand,
+    case file:make_dir(Dir) of
+        ok -> {ok, list_to_binary(Dir)};
+        {error, Reason} -> {error, atom_to_binary(Reason, utf8)}
+    end.
+
+%% HTTP GET → binary body 반환
+http_get_binary(Url) when is_binary(Url) ->
+    case httpc:request(get, {binary_to_list(Url), []}, [{timeout, 120000}], [{body_format, binary}]) of
+        {ok, {{_, 200, _}, _, Body}} -> {ok, Body};
+        {ok, {{_, Code, _}, _, _}} ->
+            {error, list_to_binary("HTTP " ++ integer_to_list(Code))};
+        {error, Reason} ->
+            {error, list_to_binary(io_lib:format("~p", [Reason]))}
     end.
 
 %% UUID v4 생성 (RFC 4122)

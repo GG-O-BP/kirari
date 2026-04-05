@@ -7,7 +7,7 @@ Written in Gleam, targeting Erlang (BEAM).
 ## Features
 
 - **Single config file** — `gleam.toml` is the only manifest, extended with kirari sections
-- **Registry-specific store** — Hex and npm packages stored separately under `~/.kir/store/hex/` and `~/.kir/store/npm/` with optimized strategies per ecosystem
+- **Registry-specific store** — Hex, npm, Git, and URL packages stored separately under `~/.kir/store/{hex,npm,git,url}/` with optimized strategies per ecosystem
 - **Content-addressable store** — SHA256-based with hardlink installs (copy fallback for npm packages with install scripts)
 - **npm metadata sidecar** — `.meta` JSON files track scripts, bin entries, platform constraints, and provenance
 - **Parallel downloads** — concurrent dependency fetching with configurable retry (`--max-retries`), timeout (`--timeout`), parallelism (`--parallel`), and backoff; settings in `[security]` section or CLI flags
@@ -42,6 +42,8 @@ Written in Gleam, targeting Erlang (BEAM).
 - **npm package aliases** — `my-react = "npm:react@^18.0.0"` installs a package under a different local name; supports scoped packages (`npm:@scope/pkg@^1.0`); alias-aware resolver, lockfile, and config round-trip
 - **Init templates** — `kir init --template=advanced` applies predefined security settings (provenance=require, license allow-list) and engine constraints; `basic` template is the default
 - **Hash pinning** — `.kir-hashes` independent TOML allowlist for per-package SHA256 verification; multiple known-good hashes per package for hash rotation; `kir hash pin <pkg>` and `kir hash verify` CLI commands; pipeline verifies pins before store
+- **Git dependencies** — `[git-dependencies]` section with `{ git = "url", ref = "main" }` / `{ git = "url", tag = "v1.0.0" }` syntax; shallow clone, ref-to-commit-SHA resolution, transitive dependency extraction from `gleam.toml`; subdir support for monorepos; deterministic content-hash CAS storage
+- **URL dependencies** — `[url-dependencies]` section with `{ url = "https://...", sha256 = "..." }` syntax; tarball download with SHA256 verification, transitive dependency extraction; CLI `kir add <name> --url=<url>`
 - **Lock conflict resolution** — `kir lock resolve` automatically detects git merge conflict markers in `kir.lock`, re-resolves from `gleam.toml`, and writes a clean lockfile with diff preview; supports `--dry-run`
 - **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
 - **`gleam build` compatible** — gleam ignores kirari sections; auto-generates `manifest.toml` + `packages.toml`
@@ -95,6 +97,8 @@ kir init                     # Add kirari sections to gleam.toml
 kir add gleam_json           # Add a Hex package
 kir add highlight.js --npm   # Add an npm package
 kir add express@latest --npm # Add npm package by dist-tag
+kir add mylib --git=https://github.com/user/mylib.git --tag=v1.0.0  # Git dep
+kir add legacy --url=https://example.com/pkg.tar.gz --sha256=abc123  # URL dep
 kir install                  # Resolve and install all dependencies
 kir build                    # Build the project
 kir test                     # Run tests
@@ -120,7 +124,9 @@ gleam build
 | `kir install [--frozen] [--exclude-newer=<TS>] [--offline] [--quiet] [--verify] [--verbose] [--debug] [--max-retries=<N>] [--timeout=<S>] [--parallel=<N>]` | Resolve and install dependencies, generate `kir.lock` |
 | `kir update [pkg...]` | Update all or specific dependencies to latest compatible versions |
 | `kir add <pkg[@version]> [--npm] [--dev]` | Add a dependency and install (`kir add gleam_json@3`, `kir add @types/node --npm`, `kir add express@latest --npm`) |
-| `kir remove <pkg> [--npm]` | Remove a dependency and reinstall |
+| `kir add <name> --git=<url> [--ref=<R>] [--tag=<T>] [--subdir=<P>] [--dev]` | Add a Git dependency |
+| `kir add <name> --url=<url> [--sha256=<H>] [--dev]` | Add a URL tarball dependency |
+| `kir remove <pkg> [--npm] [--git] [--url]` | Remove a dependency and reinstall |
 | `kir deps list [--json]` | List all dependencies with versions and registries |
 | `kir deps download` | Download dependencies without installing |
 | `kir tree [--json]` | Print the full dependency tree with transitive dependencies |
@@ -216,6 +222,12 @@ kir completion fish | source
 - `--offline` — Install from cached store only, skip registry (for `install`).
 - `--quiet` — Suppress output for CI (for `install`).
 - `--npm` — Force npm registry (for `add` and `remove`).
+- `--git=<URL>` — Git repository URL (for `add`). Also `--git` boolean flag (for `remove`).
+- `--url=<URL>` — Tarball download URL (for `add`). Also `--url` boolean flag (for `remove`).
+- `--ref=<REF>` — Git ref: branch name or commit SHA (for `add --git`, default `main`).
+- `--tag=<TAG>` — Git tag (for `add --git`, takes precedence over `--ref`).
+- `--subdir=<PATH>` — Subdirectory in Git repo for monorepos (for `add --git`).
+- `--sha256=<HASH>` — Expected SHA256 hash for URL tarball verification (for `add --url`).
 - `--dev` — Add as dev dependency (for `add`).
 - `--replace` — Replace existing version on Hex (for `publish`).
 - `--yes` — Skip confirmation prompt (for `publish`).
@@ -261,6 +273,14 @@ my-react = "npm:react@^18.0.0"     # npm package alias
 @types/node = "^18.0.0"
 vitest = "~> 3.1"                  # Hex-style works here too
 
+[git-dependencies]
+my_lib = { git = "https://github.com/user/my_lib.git", ref = "main" }
+pinned = { git = "https://github.com/user/pinned.git", tag = "v1.0.0" }
+mono_pkg = { git = "https://github.com/user/mono.git", ref = "main", subdir = "packages/lib" }
+
+[url-dependencies]
+legacy = { url = "https://example.com/pkg-1.0.0.tar.gz", sha256 = "a1b2c3..." }
+
 [overrides]
 gleam_json = ">= 3.0.0 and < 4.0.0"   # Force version for all dependents
 
@@ -285,7 +305,7 @@ erlang = ">= 26"
 node = ">= 18.0.0"
 ```
 
-`[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, `[overrides]`, `[npm-overrides]`, `[security]`, and `[engines]` are kirari extensions that Gleam silently ignores.
+`[dependencies]` and `[dev-dependencies]` are native Gleam sections. `[npm-dependencies]`, `[dev-npm-dependencies]`, `[git-dependencies]`, `[dev-git-dependencies]`, `[url-dependencies]`, `[dev-url-dependencies]`, `[overrides]`, `[npm-overrides]`, `[security]`, and `[engines]` are kirari extensions that Gleam silently ignores.
 
 ### Version constraint syntax
 
@@ -361,7 +381,7 @@ Constraints use the same syntax as dependency version constraints (Hex-style rec
 Deterministic TOML lockfile with SHA256 hashes, sorted alphabetically by package name.
 
 ```toml
-version = 2
+version = 3
 config-fingerprint = "a1b2c3d4..."
 
 [[package]]
@@ -380,11 +400,27 @@ cpu = ["x64", "arm64"]
 registry = "npm"
 sha256 = "a1b2c3d4..."
 version = "0.21.5"
+
+[[package]]
+git_ref = "abc1234def567890abc1234def567890abc12345"
+git_url = "https://github.com/user/my_lib.git"
+license = "MIT"
+name = "my_lib"
+registry = "git"
+sha256 = "e5f6a7b8..."
+version = "0.5.0"
+
+[[package]]
+name = "legacy"
+registry = "url"
+sha256 = "d4e5f6a7..."
+source_url = "https://example.com/pkg-1.0.0.tar.gz"
+version = "1.0.0"
 ```
 
-Fields `dev`, `has_scripts`, `license`, `os`, `cpu`, and `package_name` are only emitted when non-empty/applicable. `package_name` stores the real npm registry name for aliased packages (e.g., `package_name = "react"` when the local name is `my-react`). `dev = true` marks packages only reachable from dev dependencies (not in production dependency graph). `config-fingerprint` is the SHA256 of all resolution-affecting config inputs (deps, overrides, exclude-newer) — used for incremental resolution to skip re-solving when nothing changed.
+Fields `dev`, `has_scripts`, `license`, `os`, `cpu`, and `package_name` are only emitted when non-empty/applicable. `package_name` stores the real npm registry name for aliased packages (e.g., `package_name = "react"` when the local name is `my-react`). `dev = true` marks packages only reachable from dev dependencies (not in production dependency graph). `config-fingerprint` is the SHA256 of all resolution-affecting config inputs (deps, overrides, exclude-newer, git/url deps) — used for incremental resolution to skip re-solving when nothing changed. Git packages include `git_url`, `git_ref` (resolved commit SHA), and optional `git_subdir`. URL packages include `source_url`.
 
-The lockfile `version` field tracks the schema version (currently 2). Older lockfiles are automatically migrated on read. Lockfiles from newer versions of kirari are rejected with a clear upgrade message. `kir install --frozen` rejects lockfiles that need migration.
+The lockfile `version` field tracks the schema version (currently 3). Older lockfiles are automatically migrated on read. Lockfiles from newer versions of kirari are rejected with a clear upgrade message. `kir install --frozen` rejects lockfiles that need migration.
 
 CI usage: `kir install --frozen` fails if the lock doesn't match resolved dependencies.
 
@@ -397,6 +433,8 @@ gleam.toml (single source of truth)
     │
     ├── [dependencies], [dev-dependencies]     ← Gleam reads these
     ├── [npm-dependencies], [dev-npm-dependencies]  ← kirari reads, Gleam ignores
+    ├── [git-dependencies], [dev-git-dependencies] ← kirari reads, Gleam ignores
+    ├── [url-dependencies], [dev-url-dependencies] ← kirari reads, Gleam ignores
     ├── [overrides], [npm-overrides]           ← kirari reads, Gleam ignores
     ├── [security]                             ← kirari reads, Gleam ignores
     └── [engines]                              ← kirari reads, Gleam ignores
@@ -406,7 +444,7 @@ kir install
     │
     ├── Resolve (platform-aware os/cpu filtering)
     ├── Download → Verify (SHA256 + SRI integrity + Sigstore ECDSA)
-    ├── Store (Hex → ~/.kir/store/hex/, npm → ~/.kir/store/npm/ + .meta)
+    ├── Store (Hex → ~/.kir/store/hex/, npm → ~/.kir/store/npm/, Git → git/, URL → url/)
     ├── Install (Hex: hardlink, npm: hardlink or copy based on scripts)
     ├── Bin link (Unix: symlink, Windows: .cmd wrapper)
     ├── kir.lock                    ← deterministic lockfile
@@ -472,6 +510,8 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **npm package aliases** | Not available | `"npm:react@^18"` syntax, alias-aware resolver/lockfile/installer |
 | **Init templates** | Not available | `kir init --template=advanced` applies security + engine presets |
 | **Hash pinning** | Not available | `.kir-hashes` independent allowlist, `kir hash pin/verify`, pipeline integration |
+| **Git dependencies** | Not available | `[git-dependencies]` with ref/tag/subdir, shallow clone, commit SHA lockfile pinning |
+| **URL dependencies** | Not available | `[url-dependencies]` with SHA256 verification, tarball download and extraction |
 | **Written in** | Rust | Gleam |
 
 ## Architecture
@@ -507,6 +547,7 @@ src/kirari/
     partial_solution.gleam Assignment tracking, decision levels, backtracking
     fingerprint.gleam     Config fingerprint for incremental resolution (SHA256 of deps+overrides)
     conflict.gleam        Conflict analysis — structured causes, alternative suggestions, rich formatting
+  git.gleam               Git client — URL validation, ref resolution, shallow clone, content hash
   hashpin.gleam           Hash pinning — .kir-hashes independent allowlist, pipeline verification
   lockfile.gleam          kir.lock read/write + structured diff + merge conflict detection
   pipeline.gleam          Download → verify → store → install orchestration
@@ -521,6 +562,8 @@ src/kirari/
     hex.gleam             Hex-specific CAS store (~/.kir/store/hex/)
     npm.gleam             npm-specific CAS store (~/.kir/store/npm/) + metadata sidecar
     metadata.gleam        npm .meta JSON sidecar read/write
+    git.gleam             Git-specific CAS store (~/.kir/store/git/) — directory copy, .git excluded
+    url.gleam             URL-specific CAS store (~/.kir/store/url/) — tarball extraction
     gc.gleam              Store GC (Hex: immutable/never expires, npm: 90-day retention, selective by name)
     manifest.gleam        Package integrity manifest — per-file SHA256 generation and verification
   tarball.gleam           Hex double-tar + CHECKSUM verification, npm tgz extraction

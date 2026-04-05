@@ -46,6 +46,10 @@ pub fn find_undeclared_filters_declared_test() {
       overrides: [],
       engines: types.default_engines_config(),
       download: types.default_download_config(),
+      git_deps: [],
+      git_dev_deps: [],
+      url_deps: [],
+      url_dev_deps: [],
     )
   let undeclared = ffi_detect.find_undeclared(detections, config)
   assert list.length(undeclared) == 1

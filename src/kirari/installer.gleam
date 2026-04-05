@@ -89,7 +89,7 @@ pub fn clean_stale(
   let hex_names =
     list.filter_map(packages, fn(p) {
       case p.registry {
-        Hex -> Ok(p.name)
+        Hex | types.Git | types.Url -> Ok(p.name)
         Npm -> Error(Nil)
       }
     })
@@ -97,7 +97,7 @@ pub fn clean_stale(
     list.filter_map(packages, fn(p) {
       case p.registry {
         Npm -> Ok(p.name)
-        Hex -> Error(Nil)
+        Hex | types.Git | types.Url -> Error(Nil)
       }
     })
   let _ = clean_dir(project_dir <> "/build/packages", hex_names)
@@ -252,7 +252,7 @@ type InstallMode {
 
 fn install_mode(package: ResolvedPackage) -> InstallMode {
   case package.registry {
-    Hex -> HardlinkMode
+    Hex | types.Git | types.Url -> HardlinkMode
     Npm ->
       case package.has_scripts {
         True -> CopyMode
@@ -278,7 +278,7 @@ fn install_each(
 /// 패키지의 설치 경로 반환
 pub fn install_path(pkg: ResolvedPackage, project_dir: String) -> String {
   case pkg.registry {
-    Hex -> project_dir <> "/build/packages/" <> pkg.name
+    Hex | types.Git | types.Url -> project_dir <> "/build/packages/" <> pkg.name
     Npm -> project_dir <> "/node_modules/" <> pkg.name
   }
 }

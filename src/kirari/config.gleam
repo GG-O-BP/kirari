@@ -8,9 +8,10 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/types.{
-  type Dependency, type KirConfig, type Override, type PackageInfo, type PathDep,
-  type Registry, type SecurityConfig, Dependency, Hex, KirConfig, Npm, Override,
-  PackageInfo, PathDep, SecurityConfig,
+  type Dependency, type GitDep, type KirConfig, type Override, type PackageInfo,
+  type PathDep, type Registry, type SecurityConfig, type UrlDep, Dependency,
+  GitDep, GitSource, Hex, KirConfig, Npm, Override, PackageInfo, PathDep,
+  SecurityConfig, UrlDep, UrlSource,
 }
 import simplifile
 import tom.{type Toml}
@@ -72,6 +73,14 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
   let overrides = decode_overrides(doc)
   let engines = decode_engines_section(doc)
   let download = decode_download_config(doc)
+  // Git 의존성: [git-dependencies], [dev-git-dependencies]
+  let git_deps = decode_git_deps_from_table(doc, ["git-dependencies"], False)
+  let git_dev_deps =
+    decode_git_deps_from_table(doc, ["dev-git-dependencies"], True)
+  // URL 의존성: [url-dependencies], [dev-url-dependencies]
+  let url_deps = decode_url_deps_from_table(doc, ["url-dependencies"], False)
+  let url_dev_deps =
+    decode_url_deps_from_table(doc, ["dev-url-dependencies"], True)
   Ok(KirConfig(
     package: package,
     hex_deps: hex_deps,
@@ -84,6 +93,10 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     overrides: overrides,
     engines: engines,
     download: download,
+    git_deps: git_deps,
+    git_dev_deps: git_dev_deps,
+    url_deps: url_deps,
+    url_dev_deps: url_dev_deps,
   ))
 }
 
@@ -214,7 +227,7 @@ fn parse_alias_constraint(
         }
         False -> Error(Nil)
       }
-    Hex -> Error(Nil)
+    Hex | types.Git | types.Url -> Error(Nil)
   }
 }
 
@@ -232,6 +245,92 @@ fn decode_path_deps_from_table(
           tom.InlineTable(t) ->
             case dict.get(t, "path") {
               Ok(tom.String(p)) -> Ok(PathDep(name: name, path: p, dev: dev))
+              _ -> Error(Nil)
+            }
+          _ -> Error(Nil)
+        }
+      })
+      |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+    Error(_) -> []
+  }
+}
+
+fn decode_git_deps_from_table(
+  doc: Dict(String, Toml),
+  path: List(String),
+  dev: Bool,
+) -> List(GitDep) {
+  case tom.get_table(doc, path) {
+    Ok(table) ->
+      dict.to_list(table)
+      |> list.filter_map(fn(entry) {
+        let #(name, value) = entry
+        case value {
+          tom.InlineTable(t) ->
+            case dict.get(t, "git") {
+              Ok(tom.String(url)) -> {
+                let tag = case dict.get(t, "tag") {
+                  Ok(tom.String(tag_val)) -> Ok(tag_val)
+                  _ -> Error(Nil)
+                }
+                let ref = case tag {
+                  Ok(tag_val) -> tag_val
+                  Error(_) ->
+                    case dict.get(t, "ref") {
+                      Ok(tom.String(r)) -> r
+                      _ -> "main"
+                    }
+                }
+                let subdir = case dict.get(t, "subdir") {
+                  Ok(tom.String(s)) -> Ok(s)
+                  _ -> Error(Nil)
+                }
+                Ok(GitDep(
+                  name: name,
+                  source: GitSource(
+                    url: url,
+                    ref: ref,
+                    resolved_ref: "",
+                    tag: tag,
+                    subdir: subdir,
+                  ),
+                  dev: dev,
+                ))
+              }
+              _ -> Error(Nil)
+            }
+          _ -> Error(Nil)
+        }
+      })
+      |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+    Error(_) -> []
+  }
+}
+
+fn decode_url_deps_from_table(
+  doc: Dict(String, Toml),
+  path: List(String),
+  dev: Bool,
+) -> List(UrlDep) {
+  case tom.get_table(doc, path) {
+    Ok(table) ->
+      dict.to_list(table)
+      |> list.filter_map(fn(entry) {
+        let #(name, value) = entry
+        case value {
+          tom.InlineTable(t) ->
+            case dict.get(t, "url") {
+              Ok(tom.String(url)) -> {
+                let sha256 = case dict.get(t, "sha256") {
+                  Ok(tom.String(h)) -> h
+                  _ -> ""
+                }
+                Ok(UrlDep(
+                  name: name,
+                  source: UrlSource(url: url, sha256: sha256),
+                  dev: dev,
+                ))
+              }
               _ -> Error(Nil)
             }
           _ -> Error(Nil)
@@ -350,6 +449,10 @@ pub fn encode_config(config: KirConfig) -> String {
     ),
     encode_dep_section("npm-dependencies", config.npm_deps, []),
     encode_dep_section("dev-npm-dependencies", config.npm_dev_deps, []),
+    encode_git_dep_section("git-dependencies", config.git_deps),
+    encode_git_dep_section("dev-git-dependencies", config.git_dev_deps),
+    encode_url_dep_section("url-dependencies", config.url_deps),
+    encode_url_dep_section("dev-url-dependencies", config.url_dev_deps),
     encode_override_section("overrides", config.overrides, Hex),
     encode_override_section("npm-overrides", config.overrides, Npm),
     encode_security_section(config.security, config.download),
@@ -433,6 +536,57 @@ fn encode_dep_section(
         |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
         |> list.map(fn(pair) { pair.1 })
       "[" <> header <> "]\n" <> string.join(all_lines, "\n") <> "\n"
+    }
+  }
+}
+
+fn encode_git_dep_section(header: String, deps: List(GitDep)) -> String {
+  case deps {
+    [] -> ""
+    _ -> {
+      let lines =
+        list.sort(deps, fn(a, b) { string.compare(a.name, b.name) })
+        |> list.map(fn(dep) {
+          let git_part = "git = " <> quote(dep.source.url)
+          let ref_part = case dep.source.tag {
+            Ok(tag) -> ", tag = " <> quote(tag)
+            Error(_) ->
+              case dep.source.ref {
+                "main" -> ""
+                r -> ", ref = " <> quote(r)
+              }
+          }
+          let subdir_part = case dep.source.subdir {
+            Ok(s) -> ", subdir = " <> quote(s)
+            Error(_) -> ""
+          }
+          quote_key(dep.name)
+          <> " = { "
+          <> git_part
+          <> ref_part
+          <> subdir_part
+          <> " }"
+        })
+      "[" <> header <> "]\n" <> string.join(lines, "\n") <> "\n"
+    }
+  }
+}
+
+fn encode_url_dep_section(header: String, deps: List(UrlDep)) -> String {
+  case deps {
+    [] -> ""
+    _ -> {
+      let lines =
+        list.sort(deps, fn(a, b) { string.compare(a.name, b.name) })
+        |> list.map(fn(dep) {
+          let url_part = "url = " <> quote(dep.source.url)
+          let sha_part = case dep.source.sha256 {
+            "" -> ""
+            h -> ", sha256 = " <> quote(h)
+          }
+          quote_key(dep.name) <> " = { " <> url_part <> sha_part <> " }"
+        })
+      "[" <> header <> "]\n" <> string.join(lines, "\n") <> "\n"
     }
   }
 }
@@ -697,6 +851,9 @@ pub fn add_dependency(config: KirConfig, dep: Dependency) -> KirConfig {
       KirConfig(..config, npm_deps: upsert_dep(config.npm_deps, dep))
     Npm, True ->
       KirConfig(..config, npm_dev_deps: upsert_dep(config.npm_dev_deps, dep))
+    // Git/Url registry deps는 add_git_dependency/add_url_dependency 사용
+    types.Git, _ -> config
+    types.Url, _ -> config
   }
 }
 
@@ -728,7 +885,69 @@ pub fn remove_dependency(
         npm_deps: remove(config.npm_deps),
         npm_dev_deps: remove(config.npm_dev_deps),
       )
+    types.Git -> remove_git_dependency(config, name)
+    types.Url -> remove_url_dependency(config, name)
   }
+}
+
+/// KirConfig에 Git 의존성 추가
+pub fn add_git_dependency(config: KirConfig, dep: GitDep) -> KirConfig {
+  case dep.dev {
+    False -> KirConfig(..config, git_deps: upsert_git_dep(config.git_deps, dep))
+    True ->
+      KirConfig(
+        ..config,
+        git_dev_deps: upsert_git_dep(config.git_dev_deps, dep),
+      )
+  }
+}
+
+/// KirConfig에서 Git 의존성 제거
+pub fn remove_git_dependency(config: KirConfig, name: String) -> KirConfig {
+  let remove = fn(deps: List(GitDep)) {
+    list.filter(deps, fn(d) { d.name != name })
+  }
+  KirConfig(
+    ..config,
+    git_deps: remove(config.git_deps),
+    git_dev_deps: remove(config.git_dev_deps),
+  )
+}
+
+/// KirConfig에 URL 의존성 추가
+pub fn add_url_dependency(config: KirConfig, dep: UrlDep) -> KirConfig {
+  case dep.dev {
+    False -> KirConfig(..config, url_deps: upsert_url_dep(config.url_deps, dep))
+    True ->
+      KirConfig(
+        ..config,
+        url_dev_deps: upsert_url_dep(config.url_dev_deps, dep),
+      )
+  }
+}
+
+/// KirConfig에서 URL 의존성 제거
+pub fn remove_url_dependency(config: KirConfig, name: String) -> KirConfig {
+  let remove = fn(deps: List(UrlDep)) {
+    list.filter(deps, fn(d) { d.name != name })
+  }
+  KirConfig(
+    ..config,
+    url_deps: remove(config.url_deps),
+    url_dev_deps: remove(config.url_dev_deps),
+  )
+}
+
+fn upsert_git_dep(deps: List(GitDep), dep: GitDep) -> List(GitDep) {
+  let filtered = list.filter(deps, fn(d) { d.name != dep.name })
+  [dep, ..filtered]
+  |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
+}
+
+fn upsert_url_dep(deps: List(UrlDep), dep: UrlDep) -> List(UrlDep) {
+  let filtered = list.filter(deps, fn(d) { d.name != dep.name })
+  [dep, ..filtered]
+  |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
 }
 
 /// deps와 dev-deps 양쪽에 중복 선언된 패키지명 반환

@@ -6,7 +6,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/security
-import kirari/types.{type Registry, type ResolvedPackage, Hex, Npm}
+import kirari/types.{type Registry, type ResolvedPackage, Hex, Npm, Url}
 import simplifile
 import tom.{type Toml}
 
@@ -19,7 +19,12 @@ pub type HashpinError {
 
 /// 인메모리 해시 핀 목록
 pub type HashPins {
-  HashPins(hex: Dict(String, List(String)), npm: Dict(String, List(String)))
+  HashPins(
+    hex: Dict(String, List(String)),
+    npm: Dict(String, List(String)),
+    git: Dict(String, List(String)),
+    url: Dict(String, List(String)),
+  )
 }
 
 /// 해시 검증 결과
@@ -39,7 +44,7 @@ pub type PinCheckResult {
 
 /// 빈 HashPins
 pub fn empty() -> HashPins {
-  HashPins(hex: dict.new(), npm: dict.new())
+  HashPins(hex: dict.new(), npm: dict.new(), git: dict.new(), url: dict.new())
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +68,9 @@ pub fn parse(content: String) -> Result(HashPins, HashpinError) {
   )
   let hex = decode_registry_section(doc, "hex")
   let npm = decode_registry_section(doc, "npm")
-  Ok(HashPins(hex: hex, npm: npm))
+  let git = decode_registry_section(doc, "git")
+  let url = decode_registry_section(doc, "url")
+  Ok(HashPins(hex: hex, npm: npm, git: git, url: url))
 }
 
 fn decode_registry_section(
@@ -105,6 +112,8 @@ pub fn check(
   let section = case registry {
     Hex -> pins.hex
     Npm -> pins.npm
+    types.Git -> pins.git
+    Url -> pins.url
   }
   case dict.get(section, name) {
     Ok(allowed) -> {
@@ -153,7 +162,9 @@ pub fn check_all(
 pub fn encode(pins: HashPins) -> String {
   let hex_section = encode_section("hex", pins.hex)
   let npm_section = encode_section("npm", pins.npm)
-  [hex_section, npm_section]
+  let git_section = encode_section("git", pins.git)
+  let url_section = encode_section("url", pins.url)
+  [hex_section, npm_section, git_section, url_section]
   |> list.filter(fn(s) { s != "" })
   |> string.join("\n")
 }
@@ -199,19 +210,30 @@ pub fn add_hash(
   case registry {
     Hex -> {
       let existing = dict.get(pins.hex, name) |> result.unwrap([])
-      let updated = case list.contains(existing, hash_lower) {
-        True -> existing
-        False -> list.append(existing, [hash_lower])
-      }
+      let updated = upsert_hash(existing, hash_lower)
       HashPins(..pins, hex: dict.insert(pins.hex, name, updated))
     }
     Npm -> {
       let existing = dict.get(pins.npm, name) |> result.unwrap([])
-      let updated = case list.contains(existing, hash_lower) {
-        True -> existing
-        False -> list.append(existing, [hash_lower])
-      }
+      let updated = upsert_hash(existing, hash_lower)
       HashPins(..pins, npm: dict.insert(pins.npm, name, updated))
     }
+    types.Git -> {
+      let existing = dict.get(pins.git, name) |> result.unwrap([])
+      let updated = upsert_hash(existing, hash_lower)
+      HashPins(..pins, git: dict.insert(pins.git, name, updated))
+    }
+    Url -> {
+      let existing = dict.get(pins.url, name) |> result.unwrap([])
+      let updated = upsert_hash(existing, hash_lower)
+      HashPins(..pins, url: dict.insert(pins.url, name, updated))
+    }
+  }
+}
+
+fn upsert_hash(existing: List(String), hash: String) -> List(String) {
+  case list.contains(existing, hash) {
+    True -> existing
+    False -> list.append(existing, [hash])
   }
 }

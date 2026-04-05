@@ -8,6 +8,8 @@ pub fn parse_roundtrip_test() {
     hashpin.HashPins(
       hex: dict.from_list([#("gleam_stdlib", ["abc123", "def456"])]),
       npm: dict.from_list([#("react", ["sha256hex1"])]),
+      git: dict.new(),
+      url: dict.new(),
     )
   let encoded = hashpin.encode(pins)
   let assert Ok(parsed) = hashpin.parse(encoded)
@@ -26,6 +28,8 @@ pub fn check_pin_matched_test() {
     hashpin.HashPins(
       hex: dict.from_list([#("gleam_stdlib", ["abc123"])]),
       npm: dict.new(),
+      git: dict.new(),
+      url: dict.new(),
     )
   case hashpin.check(pins, "gleam_stdlib", Hex, "abc123") {
     hashpin.PinMatched(name, _) -> {
@@ -40,6 +44,8 @@ pub fn check_pin_mismatch_test() {
     hashpin.HashPins(
       hex: dict.from_list([#("gleam_stdlib", ["abc123"])]),
       npm: dict.new(),
+      git: dict.new(),
+      url: dict.new(),
     )
   case hashpin.check(pins, "gleam_stdlib", Hex, "wrong_hash") {
     hashpin.PinMismatch(name, _, actual, _allowed) -> {
@@ -60,6 +66,8 @@ pub fn check_case_insensitive_test() {
     hashpin.HashPins(
       hex: dict.from_list([#("pkg", ["abcdef"])]),
       npm: dict.new(),
+      git: dict.new(),
+      url: dict.new(),
     )
   case hashpin.check(pins, "pkg", Hex, "ABCDEF") {
     hashpin.PinMatched(_, _) -> Nil
@@ -88,6 +96,8 @@ pub fn check_multiple_allowed_test() {
     hashpin.HashPins(
       hex: dict.new(),
       npm: dict.from_list([#("react", ["old_hash", "new_hash"])]),
+      git: dict.new(),
+      url: dict.new(),
     )
   case hashpin.check(pins, "react", Npm, "new_hash") {
     hashpin.PinMatched(_, _) -> Nil
@@ -105,6 +115,8 @@ pub fn encode_sorted_test() {
     hashpin.HashPins(
       hex: dict.from_list([#("beta", ["b"]), #("alpha", ["a"])]),
       npm: dict.new(),
+      git: dict.new(),
+      url: dict.new(),
     )
   let encoded = hashpin.encode(pins)
   // alpha가 beta보다 먼저 나와야 함

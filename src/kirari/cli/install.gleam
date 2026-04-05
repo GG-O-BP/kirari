@@ -576,6 +576,129 @@ pub fn do_add(
   do_install(dir, False, "", False, False)
 }
 
+/// Git 의존성 추가
+pub fn do_add_git(
+  dir: String,
+  name: String,
+  git_url: String,
+  ref: String,
+  tag: String,
+  subdir: String,
+  is_dev: Bool,
+) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let tag_result = case tag {
+    "" -> Error(Nil)
+    t -> Ok(t)
+  }
+  let actual_ref = case tag {
+    "" -> ref
+    t -> t
+  }
+  let subdir_result = case subdir {
+    "" -> Error(Nil)
+    s -> Ok(s)
+  }
+  let dep =
+    types.GitDep(
+      name: name,
+      source: types.GitSource(
+        url: git_url,
+        ref: actual_ref,
+        resolved_ref: "",
+        tag: tag_result,
+        subdir: subdir_result,
+      ),
+      dev: is_dev,
+    )
+  let updated = config.add_git_dependency(cfg, dep)
+  use _ <- result.try(
+    config.write_config(updated, dir)
+    |> result.map_error(ConfigErr),
+  )
+  io.println(
+    output.color_green("Added")
+    <> " "
+    <> name
+    <> " [git"
+    <> case is_dev {
+      True -> ".dev"
+      False -> ""
+    }
+    <> "]",
+  )
+  do_install(dir, False, "", False, False)
+}
+
+/// URL 의존성 추가
+pub fn do_add_url(
+  dir: String,
+  name: String,
+  url: String,
+  sha256: String,
+  is_dev: Bool,
+) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let dep =
+    types.UrlDep(
+      name: name,
+      source: types.UrlSource(url: url, sha256: sha256),
+      dev: is_dev,
+    )
+  let updated = config.add_url_dependency(cfg, dep)
+  use _ <- result.try(
+    config.write_config(updated, dir)
+    |> result.map_error(ConfigErr),
+  )
+  io.println(
+    output.color_green("Added")
+    <> " "
+    <> name
+    <> " [url"
+    <> case is_dev {
+      True -> ".dev"
+      False -> ""
+    }
+    <> "]",
+  )
+  do_install(dir, False, "", False, False)
+}
+
+/// Git/URL 의존성 제거
+pub fn do_remove_git(dir: String, name: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let updated = config.remove_git_dependency(cfg, name)
+  use _ <- result.try(
+    config.write_config(updated, dir)
+    |> result.map_error(ConfigErr),
+  )
+  io.println(output.color_red("Removed") <> " " <> name <> " from [git]")
+  do_install(dir, False, "", False, False)
+}
+
+pub fn do_remove_url(dir: String, name: String) -> Result(Nil, KirError) {
+  use cfg <- result.try(
+    config.read_config(dir)
+    |> result.map_error(ConfigErr),
+  )
+  let updated = config.remove_url_dependency(cfg, name)
+  use _ <- result.try(
+    config.write_config(updated, dir)
+    |> result.map_error(ConfigErr),
+  )
+  io.println(output.color_red("Removed") <> " " <> name <> " from [url]")
+  do_install(dir, False, "", False, False)
+}
+
 pub fn do_remove(
   dir: String,
   name: String,
@@ -704,12 +827,37 @@ pub fn do_deps_list(dir: String, json_output: Bool) -> Result(Nil, KirError) {
     config.read_config(dir)
     |> result.map_error(ConfigErr),
   )
+  // Git/Url deps를 Dependency 형식으로 변환하여 통합 표시
+  let git_as_deps =
+    list.map(list.append(cfg.git_deps, cfg.git_dev_deps), fn(g) {
+      Dependency(
+        name: g.name,
+        version_constraint: g.source.url,
+        registry: types.Git,
+        dev: g.dev,
+        optional: False,
+        package_name: Error(Nil),
+      )
+    })
+  let url_as_deps =
+    list.map(list.append(cfg.url_deps, cfg.url_dev_deps), fn(u) {
+      Dependency(
+        name: u.name,
+        version_constraint: u.source.url,
+        registry: types.Url,
+        dev: u.dev,
+        optional: False,
+        package_name: Error(Nil),
+      )
+    })
   let all_deps =
     list.flatten([
       cfg.hex_deps,
       cfg.hex_dev_deps,
       cfg.npm_deps,
       cfg.npm_dev_deps,
+      git_as_deps,
+      url_as_deps,
     ])
     |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
   case json_output {

@@ -4,7 +4,7 @@ import gleam/bit_array
 import gleam/list
 import gleam/string
 import kirari/security
-import kirari/types.{type KirConfig, type Override}
+import kirari/types.{type GitDep, type KirConfig, type Override, type UrlDep}
 
 /// config의 resolution 영향 입력으로부터 SHA256 fingerprint 계산
 /// npm_scripts, provenance, license_policy는 pipeline 시점 검사이므로 제외
@@ -15,6 +15,10 @@ pub fn compute(config: KirConfig) -> String {
       deps_lines("hex-dev", config.hex_dev_deps),
       deps_lines("npm", config.npm_deps),
       deps_lines("npm-dev", config.npm_dev_deps),
+      git_deps_lines(config.git_deps),
+      git_deps_lines(config.git_dev_deps),
+      url_deps_lines(config.url_deps),
+      url_deps_lines(config.url_dev_deps),
       overrides_lines(config.overrides),
       [exclude_newer_line(config.security.exclude_newer)],
     ])
@@ -54,6 +58,18 @@ fn overrides_lines(overrides: List(Override)) -> List(String) {
     <> o.name
     <> ":"
     <> o.version_constraint
+  })
+}
+
+fn git_deps_lines(deps: List(GitDep)) -> List(String) {
+  list.map(deps, fn(d) {
+    "git:" <> d.name <> ":" <> d.source.url <> ":" <> d.source.ref
+  })
+}
+
+fn url_deps_lines(deps: List(UrlDep)) -> List(String) {
+  list.map(deps, fn(d) {
+    "url:" <> d.name <> ":" <> d.source.url <> ":" <> d.source.sha256
   })
 }
 

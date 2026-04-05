@@ -5,15 +5,19 @@ import gleam/erlang/process
 import gleam/list
 import gleam/result
 import gleam/string
+import kirari/config
+import kirari/git
 import kirari/registry/hex
 import kirari/registry/npm
 import kirari/resolver/conflict
 import kirari/resolver/fingerprint
 import kirari/resolver/pubgrub
+import kirari/security
 import kirari/semver
 import kirari/types.{
-  type Dependency, type KirConfig, type KirLock, type Override, type Registry,
-  type ResolvedPackage, Hex, Npm,
+  type Dependency, type GitDep, type KirConfig, type KirLock, type Override,
+  type Registry, type ResolvedPackage, type UrlDep, Git, GitSource, Hex, Npm,
+  ResolvedPackage, Url, UrlSource,
 }
 
 /// resolver 에러 타입
@@ -26,6 +30,8 @@ pub type ResolverError {
     explanation: String,
     report: Result(conflict.ConflictReport, Nil),
   )
+  GitResolutionError(detail: String)
+  UrlResolutionError(detail: String)
 }
 
 /// 레지스트리에서 가져온 버전 정보 (통합)
@@ -222,12 +228,21 @@ pub fn resolve_full_with_deps(
   fetch: FetchVersions,
   fetch_deps: FetchReleaseDeps,
 ) -> Result(ResolveResult, ResolverError) {
+  // Git/URL 의존성 사전 해결 (PubGrub 외부)
+  let all_git_deps = list.append(config.git_deps, config.git_dev_deps)
+  let all_url_deps = list.append(config.url_deps, config.url_dev_deps)
+  use pre_git <- result.try(pre_resolve_git_deps(all_git_deps, existing_lock))
+  use pre_url <- result.try(pre_resolve_url_deps(all_url_deps, existing_lock))
+  let pre_resolved = list.append(pre_git, pre_url)
+  // 사전 해결된 패키지의 전이 의존성을 registry deps에 주입
+  let extra_deps = list.flat_map(pre_resolved, fn(pr) { pr.transitive_deps })
   let raw_deps =
     list.flatten([
       config.hex_deps,
       config.hex_dev_deps,
       config.npm_deps,
       config.npm_dev_deps,
+      extra_deps,
     ])
   // npm dist-tag 사전 해결 (직접 의존성만 — 전이 의존성은 이미 concrete semver)
   use direct_deps <- result.try(resolve_dist_tags(raw_deps))
@@ -289,8 +304,11 @@ pub fn resolve_full_with_deps(
   // PubGrub 결과를 ResolveResult로 변환
   let entries = solve_result.entries
   let resolved_dict = dict.map_values(entries, fn(_key, pair) { pair.0 })
+  let pubgrub_packages = dict.values(resolved_dict)
+  // 사전 해결된 Git/URL 패키지 병합
+  let pre_resolved_packages = list.map(pre_resolved, fn(pr) { pr.package })
   let packages =
-    dict.values(resolved_dict)
+    list.append(pubgrub_packages, pre_resolved_packages)
     |> list.sort(types.compare_packages)
 
   // 전체 VersionInfo (tarball_url 등 포함) 재구축
@@ -343,6 +361,8 @@ fn convert_error(e: ResolverError) -> pubgrub.PubGrubError {
         Error(Nil),
         dict.new(),
       )
+    GitResolutionError(d) -> pubgrub.RegError("git: " <> d)
+    UrlResolutionError(d) -> pubgrub.RegError("url: " <> d)
   }
 }
 
@@ -469,6 +489,7 @@ fn fetch_from_registries(
   case registry {
     Hex -> fetch_hex_versions(name, False)
     Npm -> fetch_npm_versions(name, False)
+    Git | Url -> Ok([])
   }
 }
 
@@ -479,6 +500,7 @@ fn fetch_from_registries_fresh(
   case registry {
     Hex -> fetch_hex_versions(name, True)
     Npm -> fetch_npm_versions(name, True)
+    Git | Url -> Ok([])
   }
 }
 
@@ -489,6 +511,7 @@ fn fetch_from_registries_offline(
   case registry {
     Hex -> fetch_hex_versions_offline(name)
     Npm -> fetch_npm_versions_offline(name)
+    Git | Url -> Ok([])
   }
 }
 
@@ -498,6 +521,7 @@ fn fetch_release_deps_offline(
   registry: Registry,
 ) -> Result(#(List(types.Dependency), String), ResolverError) {
   case registry {
+    Git | Url -> Ok(#([], ""))
     Hex -> {
       use info <- result.try(
         hex.get_release_info_offline(name, version)
@@ -547,6 +571,7 @@ fn fetch_release_deps_impl(
   skip_cache: Bool,
 ) -> Result(#(List(types.Dependency), String), ResolverError) {
   case registry {
+    Git | Url -> Ok(#([], ""))
     Hex -> {
       use info <- result.try(
         hex.get_release_info_with_opts(name, version, skip_cache)
@@ -826,6 +851,7 @@ pub fn get_latest_version(
       npm.get_versions(name)
       |> result.map(list.map(_, fn(v) { v.version }))
       |> result.replace_error(Nil)
+    Git | Url -> Error(Nil)
   }
   use vs <- result.try(versions)
   vs
@@ -891,6 +917,8 @@ fn classify_dev_packages(
       list.map(config.npm_deps, fn(d) {
         d.name <> ":" <> types.registry_to_string(d.registry)
       }),
+      list.map(config.git_deps, fn(d) { d.name <> ":git" }),
+      list.map(config.url_deps, fn(d) { d.name <> ":url" }),
     ])
 
   // 2. 의존성 인접 리스트 구축
@@ -1014,3 +1042,267 @@ fn collect_prefetch_results(
       }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Git/URL 의존성 사전 해결 (PubGrub 외부)
+// ---------------------------------------------------------------------------
+
+type PreResolvedDep {
+  PreResolvedDep(package: ResolvedPackage, transitive_deps: List(Dependency))
+}
+
+/// Git 의존성 목록을 사전 해결 — ref → commit SHA, clone → gleam.toml 파싱
+fn pre_resolve_git_deps(
+  git_deps: List(GitDep),
+  existing_lock: Result(KirLock, Nil),
+) -> Result(List(PreResolvedDep), ResolverError) {
+  case git_deps {
+    [] -> Ok([])
+    _ -> {
+      use _ <- result.try(
+        git.check_installed()
+        |> result.map_error(fn(_) {
+          GitResolutionError(
+            "git is not installed. Install git to use git dependencies.",
+          )
+        }),
+      )
+      list.try_map(git_deps, fn(dep) { pre_resolve_one_git(dep, existing_lock) })
+    }
+  }
+}
+
+fn pre_resolve_one_git(
+  dep: GitDep,
+  existing_lock: Result(KirLock, Nil),
+) -> Result(PreResolvedDep, ResolverError) {
+  // URL 검증
+  use _ <- result.try(
+    git.validate_url(dep.source.url)
+    |> result.map_error(fn(e) { GitResolutionError(git_error_string(e)) }),
+  )
+  // lockfile에서 기존 commit SHA 조회 (재사용)
+  let locked_ref = find_locked_git_ref(dep.name, existing_lock)
+  // ref 해결: tag 또는 branch → commit SHA
+  use resolved_ref <- result.try(case locked_ref {
+    Ok(sha) -> Ok(sha)
+    Error(_) ->
+      case dep.source.tag {
+        Ok(tag) ->
+          git.resolve_tag(dep.source.url, tag)
+          |> result.map_error(fn(e) { GitResolutionError(git_error_string(e)) })
+        Error(_) ->
+          git.resolve_ref(dep.source.url, dep.source.ref)
+          |> result.map_error(fn(e) { GitResolutionError(git_error_string(e)) })
+      }
+  })
+  // 임시 디렉토리에 shallow clone
+  use tmp_dir <- result.try(
+    make_temp_clone_dir()
+    |> result.map_error(fn(e) { GitResolutionError(e) }),
+  )
+  use _ <- result.try(
+    git.shallow_clone(dep.source.url, resolved_ref, tmp_dir)
+    |> result.map_error(fn(e) { GitResolutionError(git_error_string(e)) }),
+  )
+  // gleam.toml 파싱 → 버전, 전이 의존성 추출
+  use toml_content <- result.try(
+    git.read_gleam_toml(tmp_dir, dep.source.subdir)
+    |> result.map_error(fn(e) { GitResolutionError(git_error_string(e)) }),
+  )
+  let #(version, transitive_deps, license) = case
+    config.parse_config(toml_content)
+  {
+    Ok(cfg) -> {
+      let deps = list.append(cfg.hex_deps, cfg.npm_deps)
+      #(cfg.package.version, deps, string.join(cfg.package.licences, " OR "))
+    }
+    Error(_) -> #("0.0.0", [], "")
+  }
+  // content hash 계산 (CAS 키)
+  use content_sha <- result.try(
+    git.content_hash(tmp_dir, dep.source.subdir)
+    |> result.map_error(fn(e) { GitResolutionError(git_error_string(e)) }),
+  )
+  let package =
+    ResolvedPackage(
+      name: dep.name,
+      version: version,
+      registry: Git,
+      sha256: content_sha,
+      has_scripts: False,
+      platform: Error(Nil),
+      license: license,
+      dev: dep.dev,
+      package_name: Error(Nil),
+      git_source: Ok(GitSource(..dep.source, resolved_ref: resolved_ref)),
+      url_source: Error(Nil),
+    )
+  Ok(PreResolvedDep(package: package, transitive_deps: transitive_deps))
+}
+
+/// lockfile에서 동일 Git URL의 기존 commit SHA 조회
+fn find_locked_git_ref(
+  name: String,
+  existing_lock: Result(KirLock, Nil),
+) -> Result(String, Nil) {
+  case existing_lock {
+    Error(_) -> Error(Nil)
+    Ok(lock) ->
+      case
+        list.find(lock.packages, fn(p) { p.name == name && p.registry == Git })
+      {
+        Ok(pkg) ->
+          case pkg.git_source {
+            Ok(gs) if gs.resolved_ref != "" -> Ok(gs.resolved_ref)
+            _ -> Error(Nil)
+          }
+        Error(_) -> Error(Nil)
+      }
+  }
+}
+
+/// URL 의존성 사전 해결 — 다운로드 → 추출 → gleam.toml 파싱
+fn pre_resolve_url_deps(
+  url_deps: List(UrlDep),
+  existing_lock: Result(KirLock, Nil),
+) -> Result(List(PreResolvedDep), ResolverError) {
+  list.try_map(url_deps, fn(dep) { pre_resolve_one_url(dep, existing_lock) })
+}
+
+fn pre_resolve_one_url(
+  dep: UrlDep,
+  existing_lock: Result(KirLock, Nil),
+) -> Result(PreResolvedDep, ResolverError) {
+  // lockfile에서 기존 결과 조회 (URL + sha256 일치 시 재사용)
+  case find_locked_url_pkg(dep.name, dep.source.sha256, existing_lock) {
+    Ok(pkg) -> Ok(PreResolvedDep(package: pkg, transitive_deps: []))
+    Error(_) -> {
+      // HTTP 다운로드
+      use #(data, actual_sha) <- result.try(
+        download_url_tarball(dep.source.url)
+        |> result.map_error(fn(e) { UrlResolutionError(e) }),
+      )
+      // sha256 검증 (선언된 해시가 있으면)
+      use _ <- result.try(case dep.source.sha256 {
+        "" -> Ok(Nil)
+        expected ->
+          security.verify_hash(data, expected)
+          |> result.map_error(fn(_) {
+            UrlResolutionError(
+              "SHA256 mismatch for " <> dep.name <> " from " <> dep.source.url,
+            )
+          })
+      })
+      let sha256 = case dep.source.sha256 {
+        "" -> actual_sha
+        h -> h
+      }
+      // 임시 추출 → gleam.toml 파싱
+      use tmp_dir <- result.try(
+        make_temp_clone_dir()
+        |> result.map_error(fn(e) { UrlResolutionError(e) }),
+      )
+      use _ <- result.try(
+        extract_url_tarball(data, tmp_dir)
+        |> result.map_error(fn(e) { UrlResolutionError(e) }),
+      )
+      let #(version, transitive_deps, license) = case
+        read_and_parse_config(tmp_dir)
+      {
+        Ok(cfg) -> {
+          let deps = list.append(cfg.hex_deps, cfg.npm_deps)
+          #(
+            cfg.package.version,
+            deps,
+            string.join(cfg.package.licences, " OR "),
+          )
+        }
+        Error(_) -> #("0.0.0", [], "")
+      }
+      let package =
+        ResolvedPackage(
+          name: dep.name,
+          version: version,
+          registry: Url,
+          sha256: sha256,
+          has_scripts: False,
+          platform: Error(Nil),
+          license: license,
+          dev: dep.dev,
+          package_name: Error(Nil),
+          git_source: Error(Nil),
+          url_source: Ok(UrlSource(url: dep.source.url, sha256: sha256)),
+        )
+      Ok(PreResolvedDep(package: package, transitive_deps: transitive_deps))
+    }
+  }
+}
+
+fn find_locked_url_pkg(
+  name: String,
+  sha256: String,
+  existing_lock: Result(KirLock, Nil),
+) -> Result(ResolvedPackage, Nil) {
+  case existing_lock {
+    Error(_) -> Error(Nil)
+    Ok(lock) ->
+      case
+        list.find(lock.packages, fn(p) {
+          p.name == name
+          && p.registry == Url
+          && { sha256 == "" || p.sha256 == sha256 }
+        })
+      {
+        Ok(pkg) -> Ok(pkg)
+        Error(_) -> Error(Nil)
+      }
+  }
+}
+
+fn git_error_string(e: git.GitError) -> String {
+  case e {
+    git.GitNotInstalled -> "git is not installed"
+    git.CloneFailed(url, detail) -> "clone failed: " <> url <> " — " <> detail
+    git.RefResolveFailed(url, ref, detail) ->
+      "ref resolve failed: " <> url <> " " <> ref <> " — " <> detail
+    git.InvalidUrl(url, reason) -> "invalid git URL: " <> url <> " — " <> reason
+    git.CheckoutFailed(detail) -> "checkout failed: " <> detail
+    git.ConfigParseFailed(detail) -> "config parse failed: " <> detail
+    git.IoError(detail) -> "git IO error: " <> detail
+  }
+}
+
+@external(erlang, "kirari_ffi", "make_temp_dir_system")
+fn make_temp_dir_system() -> Result(String, String)
+
+fn make_temp_clone_dir() -> Result(String, String) {
+  make_temp_dir_system()
+}
+
+@external(erlang, "kirari_ffi", "http_get_binary")
+fn http_get_binary(url: String) -> Result(BitArray, String)
+
+fn download_url_tarball(url: String) -> Result(#(BitArray, String), String) {
+  use data <- result.try(http_get_binary(url))
+  let sha = security.sha256_hex(data)
+  Ok(#(data, sha))
+}
+
+@external(erlang, "kirari_ffi", "extract_tar")
+fn extract_tar_ffi(data: BitArray, dest: String) -> Result(Nil, String)
+
+fn extract_url_tarball(data: BitArray, dest: String) -> Result(Nil, String) {
+  extract_tar_ffi(data, dest)
+}
+
+fn read_and_parse_config(dir: String) -> Result(types.KirConfig, Nil) {
+  case simplifile.read(dir <> "/gleam.toml") {
+    Ok(content) ->
+      config.parse_config(content)
+      |> result.replace_error(Nil)
+    Error(_) -> Error(Nil)
+  }
+}
+
+import simplifile

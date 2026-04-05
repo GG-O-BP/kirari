@@ -60,6 +60,10 @@ fn sample_config() -> KirConfig {
     overrides: [],
     engines: types.default_engines_config(),
     download: types.default_download_config(),
+    git_deps: [],
+    git_dev_deps: [],
+    url_deps: [],
+    url_dev_deps: [],
   )
 }
 
@@ -140,6 +144,10 @@ pub fn add_dependency_test() {
       overrides: [],
       engines: types.default_engines_config(),
       download: types.default_download_config(),
+      git_deps: [],
+      git_dev_deps: [],
+      url_deps: [],
+      url_dev_deps: [],
     )
   let dep =
     Dependency(
@@ -195,6 +203,10 @@ pub fn add_dependency_upsert_test() {
       overrides: [],
       engines: types.default_engines_config(),
       download: types.default_download_config(),
+      git_deps: [],
+      git_dev_deps: [],
+      url_deps: [],
+      url_dev_deps: [],
     )
   let updated = config.add_dependency(cfg, dep_v2)
   assert list.length(updated.hex_deps) == 1
@@ -232,6 +244,10 @@ pub fn remove_dependency_test() {
       overrides: [],
       engines: types.default_engines_config(),
       download: types.default_download_config(),
+      git_deps: [],
+      git_dev_deps: [],
+      url_deps: [],
+      url_dev_deps: [],
     )
   let updated = config.remove_dependency(cfg, "foo", Npm)
   assert updated.npm_deps == []

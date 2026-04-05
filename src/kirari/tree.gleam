@@ -30,6 +30,10 @@ pub fn build(
       list.map(config.hex_dev_deps, fn(d) { #(d.name, d.registry) }),
       list.map(config.npm_deps, fn(d) { #(d.name, d.registry) }),
       list.map(config.npm_dev_deps, fn(d) { #(d.name, d.registry) }),
+      list.map(config.git_deps, fn(d) { #(d.name, types.Git) }),
+      list.map(config.git_dev_deps, fn(d) { #(d.name, types.Git) }),
+      list.map(config.url_deps, fn(d) { #(d.name, types.Url) }),
+      list.map(config.url_dev_deps, fn(d) { #(d.name, types.Url) }),
     ])
 
   list.filter_map(direct_names, fn(pair) {

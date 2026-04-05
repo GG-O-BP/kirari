@@ -8,6 +8,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/cli/progress.{type ProgressHandle}
+import kirari/git
 import kirari/hashpin
 import kirari/installer
 import kirari/registry/hex
@@ -16,7 +17,7 @@ import kirari/resolver.{type ResolveResult}
 import kirari/security
 import kirari/store
 import kirari/types.{
-  type ResolvedPackage, type SecurityConfig, Hex, Npm, ResolvedPackage,
+  type ResolvedPackage, type SecurityConfig, Git, Hex, Npm, ResolvedPackage, Url,
 }
 
 /// pipeline 에러 타입
@@ -419,39 +420,142 @@ fn download_and_store_one(
   }
   case already_stored {
     True -> Ok(DownloadResult(package: pkg, bin: [], bytes_downloaded: 0))
-    False -> {
-      // tarball URL 조회 (빈 문자열이면 기본 URL 생성)
-      let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
-      let tarball_url = case dict.get(ctx.version_infos, key) {
-        Ok(vi) -> vi.tarball_url
-        Error(_) -> ""
+    False ->
+      case pkg.registry {
+        Git -> download_and_store_git(pkg, dl_config)
+        Url -> download_and_store_url(pkg, ctx, dl_config)
+        Hex | Npm -> {
+          let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
+          let tarball_url = case dict.get(ctx.version_infos, key) {
+            Ok(vi) -> vi.tarball_url
+            Error(_) -> ""
+          }
+          let tarball_url = resolve_tarball_url(pkg, tarball_url)
+          use #(data, sha256) <- result.try(download_with_retry(
+            pkg,
+            tarball_url,
+            dl_config.max_retries,
+            dl_config.backoff_ms,
+          ))
+          let data_size = bit_array.byte_size(data)
+          use _ <- result.try(verify_hash_pin(pkg, sha256, ctx))
+          use _ <- result.try(verify_provenance_if_npm(pkg, data, ctx))
+          use _ <- result.try(verify_sri_if_npm(pkg, data, ctx))
+          use store_result <- result.try(
+            store.store_package(
+              data,
+              sha256,
+              pkg.name,
+              pkg.version,
+              pkg.registry,
+            )
+            |> result.map_error(StoreErr),
+          )
+          let updated_pkg =
+            ResolvedPackage(
+              ..pkg,
+              sha256: sha256,
+              has_scripts: store_result.has_scripts,
+            )
+          Ok(DownloadResult(
+            package: updated_pkg,
+            bin: store_result.bin,
+            bytes_downloaded: data_size,
+          ))
+        }
       }
-      let tarball_url = resolve_tarball_url(pkg, tarball_url)
-      // 다운로드 (설정 가능한 재시도)
+  }
+}
+
+/// Git 패키지: clone → content hash → store
+fn download_and_store_git(
+  pkg: ResolvedPackage,
+  dl_config: types.DownloadConfig,
+) -> Result(DownloadResult, PipelineError) {
+  case pkg.git_source {
+    Error(_) ->
+      Error(DownloadError(pkg.name, pkg.version, "missing git source info"))
+    Ok(gs) -> {
+      use tmp_dir <- result.try(
+        make_pipeline_temp_dir()
+        |> result.map_error(fn(e) {
+          DownloadError(pkg.name, pkg.version, "temp dir: " <> e)
+        }),
+      )
+      use _ <- result.try(
+        retry_git_clone(
+          gs.url,
+          gs.resolved_ref,
+          tmp_dir,
+          dl_config.max_retries,
+          dl_config.backoff_ms,
+        )
+        |> result.map_error(fn(e) {
+          DownloadError(pkg.name, pkg.version, "git clone: " <> e)
+        }),
+      )
+      let src_dir = case gs.subdir {
+        Ok(sub) -> tmp_dir <> "/" <> sub
+        Error(_) -> tmp_dir
+      }
+      use store_result <- result.try(
+        store.store_git_package(src_dir, pkg.sha256, pkg.name, pkg.version)
+        |> result.map_error(StoreErr),
+      )
+      Ok(DownloadResult(
+        package: ResolvedPackage(..pkg, sha256: pkg.sha256),
+        bin: store_result.bin,
+        bytes_downloaded: 0,
+      ))
+    }
+  }
+}
+
+fn retry_git_clone(
+  url: String,
+  commit: String,
+  dest: String,
+  retries: Int,
+  backoff_ms: Int,
+) -> Result(Nil, String) {
+  case git.shallow_clone(url, commit, dest) {
+    Ok(_) -> Ok(Nil)
+    Error(_e) if retries > 1 -> {
+      let _ = process.sleep(backoff_ms)
+      retry_git_clone(url, commit, dest, retries - 1, backoff_ms)
+    }
+    Error(e) ->
+      Error(case e {
+        git.CloneFailed(_, d) -> d
+        git.CheckoutFailed(d) -> d
+        _ -> "clone failed"
+      })
+  }
+}
+
+/// URL 패키지: HTTP download → hash 검증 → store
+fn download_and_store_url(
+  pkg: ResolvedPackage,
+  ctx: DownloadContext,
+  dl_config: types.DownloadConfig,
+) -> Result(DownloadResult, PipelineError) {
+  case pkg.url_source {
+    Error(_) ->
+      Error(DownloadError(pkg.name, pkg.version, "missing url source info"))
+    Ok(us) -> {
       use #(data, sha256) <- result.try(download_with_retry(
         pkg,
-        tarball_url,
+        us.url,
         dl_config.max_retries,
         dl_config.backoff_ms,
       ))
       let data_size = bit_array.byte_size(data)
-      // hash pin 검증 (.kir-hashes)
       use _ <- result.try(verify_hash_pin(pkg, sha256, ctx))
-      // npm Sigstore 서명 검증 (다운로드 후, store 전)
-      use _ <- result.try(verify_provenance_if_npm(pkg, data, ctx))
-      // npm SRI integrity 검증
-      use _ <- result.try(verify_sri_if_npm(pkg, data, ctx))
-      // store에 저장
       use store_result <- result.try(
-        store.store_package(data, sha256, pkg.name, pkg.version, pkg.registry)
+        store.store_package(data, sha256, pkg.name, pkg.version, Url)
         |> result.map_error(StoreErr),
       )
-      let updated_pkg =
-        ResolvedPackage(
-          ..pkg,
-          sha256: sha256,
-          has_scripts: store_result.has_scripts,
-        )
+      let updated_pkg = ResolvedPackage(..pkg, sha256: sha256)
       Ok(DownloadResult(
         package: updated_pkg,
         bin: store_result.bin,
@@ -461,13 +565,16 @@ fn download_and_store_one(
   }
 }
 
+@external(erlang, "kirari_ffi", "make_temp_dir_system")
+fn make_pipeline_temp_dir() -> Result(String, String)
+
 fn verify_provenance_if_npm(
   pkg: ResolvedPackage,
   data: BitArray,
   ctx: DownloadContext,
 ) -> Result(Nil, PipelineError) {
   case pkg.registry {
-    Hex -> Ok(Nil)
+    Hex | Git | Url -> Ok(Nil)
     Npm -> {
       let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
       let signatures = case dict.get(ctx.version_infos, key) {
@@ -496,7 +603,7 @@ fn verify_sri_if_npm(
   ctx: DownloadContext,
 ) -> Result(Nil, PipelineError) {
   case pkg.registry {
-    Hex -> Ok(Nil)
+    Hex | Git | Url -> Ok(Nil)
     Npm -> {
       let key = pkg.name <> ":" <> types.registry_to_string(pkg.registry)
       let integrity = case dict.get(ctx.version_infos, key) {
@@ -534,6 +641,8 @@ fn resolve_tarball_url(pkg: ResolvedPackage, url: String) -> String {
           <> pkg.version
           <> ".tgz"
         }
+        // Git/Url은 자체 URL을 사용하므로 여기에 도달하지 않음
+        Git | Url -> ""
       }
     _ -> url
   }
@@ -568,11 +677,17 @@ fn download_tarball(
       |> result.map_error(fn(e) {
         DownloadError(pkg.name, pkg.version, string.inspect(e))
       })
-    Npm ->
+    Npm | Url ->
       npm.download_tarball(pkg.name, pkg.version, tarball_url)
       |> result.map_error(fn(e) {
         DownloadError(pkg.name, pkg.version, string.inspect(e))
       })
+    Git ->
+      Error(DownloadError(
+        pkg.name,
+        pkg.version,
+        "Git packages use clone, not tarball download",
+      ))
   }
 }
 

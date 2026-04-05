@@ -273,18 +273,73 @@ fn add_cmd() -> glint.Command(Nil) {
     |> glint.flag_default(False)
     |> glint.flag_help("Add as dev dependency"),
   )
+  use git_flag <- glint.flag(
+    glint.string_flag("git")
+    |> glint.flag_default("")
+    |> glint.flag_help("Git repository URL"),
+  )
+  use ref_flag <- glint.flag(
+    glint.string_flag("ref")
+    |> glint.flag_default("main")
+    |> glint.flag_help("Git ref (branch or commit)"),
+  )
+  use tag_flag <- glint.flag(
+    glint.string_flag("tag")
+    |> glint.flag_default("")
+    |> glint.flag_help("Git tag"),
+  )
+  use subdir_flag <- glint.flag(
+    glint.string_flag("subdir")
+    |> glint.flag_default("")
+    |> glint.flag_help("Subdirectory in Git repo"),
+  )
+  use url_flag <- glint.flag(
+    glint.string_flag("url")
+    |> glint.flag_default("")
+    |> glint.flag_help("Tarball URL"),
+  )
+  use sha256_flag <- glint.flag(
+    glint.string_flag("sha256")
+    |> glint.flag_default("")
+    |> glint.flag_help("Expected SHA256 for URL tarball"),
+  )
   glint.command(fn(_named, args, flags) {
     let is_npm = npm_flag(flags) |> result.unwrap(False)
     let is_dev = dev_flag(flags) |> result.unwrap(False)
+    let git_url = git_flag(flags) |> result.unwrap("")
+    let ref = ref_flag(flags) |> result.unwrap("main")
+    let tag = tag_flag(flags) |> result.unwrap("")
+    let subdir = subdir_flag(flags) |> result.unwrap("")
+    let url = url_flag(flags) |> result.unwrap("")
+    let sha256 = sha256_flag(flags) |> result.unwrap("")
     case args {
-      [raw_name, ..] -> {
-        let #(name, version) = install.parse_add_arg(raw_name, is_npm)
-        case install.do_add(".", name, version, is_npm, is_dev) {
-          Ok(_) -> Nil
-          Error(e) -> output.print_error(e)
+      [name, ..] ->
+        case git_url, url {
+          // Git 의존성
+          g, _ if g != "" ->
+            case install.do_add_git(".", name, g, ref, tag, subdir, is_dev) {
+              Ok(_) -> Nil
+              Error(e) -> output.print_error(e)
+            }
+          // URL 의존성
+          _, u if u != "" ->
+            case install.do_add_url(".", name, u, sha256, is_dev) {
+              Ok(_) -> Nil
+              Error(e) -> output.print_error(e)
+            }
+          // 기존 Hex/npm
+          _, _ -> {
+            let #(n, version) = install.parse_add_arg(name, is_npm)
+            case install.do_add(".", n, version, is_npm, is_dev) {
+              Ok(_) -> Nil
+              Error(e) -> output.print_error(e)
+            }
+          }
         }
-      }
-      _ -> io.println("Usage: kir add <package[@version]> [--npm] [--dev]")
+      _ ->
+        io.println(
+          "Usage: kir add <name> [--npm] [--dev] [--git <url>] [--ref <ref>] [--tag <tag>] [--subdir <path>] [--url <url>] [--sha256 <hash>]",
+        )
     }
   })
 }
@@ -296,15 +351,40 @@ fn remove_cmd() -> glint.Command(Nil) {
     |> glint.flag_default(False)
     |> glint.flag_help("Force npm registry"),
   )
+  use git_flag <- glint.flag(
+    glint.bool_flag("git")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Remove git dependency"),
+  )
+  use url_flag <- glint.flag(
+    glint.bool_flag("url")
+    |> glint.flag_default(False)
+    |> glint.flag_help("Remove url dependency"),
+  )
   glint.command(fn(_named, args, flags) {
     let is_npm = npm_flag(flags) |> result.unwrap(False)
+    let is_git = git_flag(flags) |> result.unwrap(False)
+    let is_url = url_flag(flags) |> result.unwrap(False)
     case args {
       [name, ..] ->
-        case install.do_remove(".", name, is_npm) {
-          Ok(_) -> Nil
-          Error(e) -> output.print_error(e)
+        case is_git, is_url {
+          True, _ ->
+            case install.do_remove_git(".", name) {
+              Ok(_) -> Nil
+              Error(e) -> output.print_error(e)
+            }
+          _, True ->
+            case install.do_remove_url(".", name) {
+              Ok(_) -> Nil
+              Error(e) -> output.print_error(e)
+            }
+          _, _ ->
+            case install.do_remove(".", name, is_npm) {
+              Ok(_) -> Nil
+              Error(e) -> output.print_error(e)
+            }
         }
-      _ -> io.println("Usage: kir remove <package> [--npm]")
+      _ -> io.println("Usage: kir remove <package> [--npm] [--git] [--url]")
     }
   })
 }

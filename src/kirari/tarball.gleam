@@ -23,7 +23,8 @@ pub fn extract(
 ) -> Result(Nil, TarballError) {
   case registry {
     Hex -> extract_hex(data, dest)
-    Npm -> extract_npm(data, dest)
+    Npm | types.Url -> extract_npm(data, dest)
+    types.Git -> Error(ExtractError("Git packages are stored from directory"))
   }
 }
 

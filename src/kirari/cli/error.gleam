@@ -29,6 +29,7 @@ pub type KirError {
   AuditErr(audit.AuditError)
   FfiErr(ffi_detect.FfiError)
   EnginesErr(violations: List(engines.EngineViolation))
+  GitErr(detail: String)
   UserError(detail: String)
 }
 
@@ -78,6 +79,8 @@ pub fn format_error(error: KirError) -> String {
         resolver.RegistryError(d) -> "registry error: " <> d
         resolver.CyclicDependency(c) ->
           "cyclic dependency: " <> string.join(c, " → ")
+        resolver.GitResolutionError(d) -> "git resolution error: " <> d
+        resolver.UrlResolutionError(d) -> "url resolution error: " <> d
         resolver.ResolutionConflict(explanation, report) ->
           case report {
             Ok(r) -> conflict.format_report(r)
@@ -156,6 +159,7 @@ pub fn format_error(error: KirError) -> String {
         }),
         "\n",
       )
+    GitErr(d) -> "git error: " <> d
     UserError(d) -> d
   }
 }

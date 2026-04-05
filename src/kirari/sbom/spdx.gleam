@@ -101,6 +101,8 @@ fn dep_package(
   let supplier = case pkg.registry {
     Hex -> "Organization: hex.pm"
     Npm -> "Organization: npmjs.com"
+    types.Git -> "Organization: git"
+    types.Url -> "Organization: url"
   }
   let checksums = case pkg.sha256 {
     "" -> []
@@ -156,6 +158,10 @@ fn pkg_purl(pkg: ResolvedPackage) -> String {
       }
       "pkg:npm/" <> name <> "@" <> pkg.version
     }
+    types.Git ->
+      "pkg:generic/" <> pkg.name <> "@" <> pkg.version <> "?vcs_url=git"
+    types.Url ->
+      "pkg:generic/" <> pkg.name <> "@" <> pkg.version <> "?download_url=url"
   }
 }
 

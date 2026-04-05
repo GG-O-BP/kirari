@@ -21,6 +21,8 @@ fn sample_packages() -> List(ResolvedPackage) {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -32,6 +34,8 @@ fn sample_packages() -> List(ResolvedPackage) {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
     ResolvedPackage(
       name: "gleam_json",
@@ -43,6 +47,8 @@ fn sample_packages() -> List(ResolvedPackage) {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
   ]
 }
@@ -132,6 +138,8 @@ pub fn verify_frozen_mismatch_test() {
       license: "",
       dev: False,
       package_name: Error(Nil),
+      git_source: Error(Nil),
+      url_source: Error(Nil),
     ),
   ]
   let assert Error(lockfile.FrozenMismatch(_)) =
@@ -231,7 +239,8 @@ pub fn parse_v2_lock_unchanged_test() {
   let content =
     "version = 2\n\n[[package]]\nname = \"a\"\nregistry = \"hex\"\nsha256 = \"x\"\nversion = \"1.0.0\"\n"
   let assert Ok(lock) = lockfile.parse(content)
-  assert lock.version == 2
+  // v2는 자동 마이그레이션으로 v3이 됨
+  assert lock.version == 3
 }
 
 pub fn parse_future_version_fails_test() {
@@ -265,7 +274,7 @@ pub fn from_packages_uses_current_version_test() {
 pub fn encode_uses_current_version_test() {
   let lock = lockfile.from_packages([])
   let encoded = lockfile.encode(lock)
-  assert string.contains(encoded, "version = 2")
+  assert string.contains(encoded, "version = 3")
 }
 
 // ---------------------------------------------------------------------------
