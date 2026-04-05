@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/string
 import gleeunit
 import kirari/resolver/fingerprint
@@ -19,6 +20,7 @@ fn base_config() -> KirConfig {
       target: "erlang",
       licences: [],
       repository: Error(Nil),
+      links: [],
     ),
     hex_deps: [
       Dependency(
@@ -52,6 +54,7 @@ fn base_config() -> KirConfig {
     git_dev_deps: [],
     url_deps: [],
     url_dev_deps: [],
+    npm_package: dict.new(),
   )
 }
 

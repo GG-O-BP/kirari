@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/list
 import gleeunit
 import kirari/ffi as ffi_detect
@@ -26,6 +27,7 @@ pub fn find_undeclared_filters_declared_test() {
         target: "erlang",
         licences: [],
         repository: Error(Nil),
+        links: [],
       ),
       hex_deps: [],
       hex_dev_deps: [],
@@ -50,6 +52,7 @@ pub fn find_undeclared_filters_declared_test() {
       git_dev_deps: [],
       url_deps: [],
       url_dev_deps: [],
+      npm_package: dict.new(),
     )
   let undeclared = ffi_detect.find_undeclared(detections, config)
   assert list.length(undeclared) == 1

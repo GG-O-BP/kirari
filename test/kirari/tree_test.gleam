@@ -22,6 +22,7 @@ fn test_config() -> KirConfig {
       target: "erlang",
       licences: [],
       repository: Error(Nil),
+      links: [],
     ),
     hex_deps: [
       Dependency(
@@ -55,6 +56,7 @@ fn test_config() -> KirConfig {
     git_dev_deps: [],
     url_deps: [],
     url_dev_deps: [],
+    npm_package: dict.new(),
   )
 }
 
@@ -158,6 +160,7 @@ pub fn empty_tree_test() {
         target: "erlang",
         licences: [],
         repository: Error(Nil),
+        links: [],
       ),
       hex_deps: [],
       hex_dev_deps: [],
@@ -173,6 +176,7 @@ pub fn empty_tree_test() {
       git_dev_deps: [],
       url_deps: [],
       url_dev_deps: [],
+      npm_package: dict.new(),
     )
   let roots =
     tree.build(

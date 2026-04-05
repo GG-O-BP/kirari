@@ -1,7 +1,9 @@
 //// 공유 도메인 타입 — kir 전체에서 사용하는 핵심 데이터 구조
 
+import gleam/dict.{type Dict}
 import gleam/order.{type Order}
 import gleam/string
+import tom.{type Toml}
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -240,7 +242,7 @@ pub fn default_download_config() -> DownloadConfig {
 // PackageInfo ([package] 섹션)
 // ---------------------------------------------------------------------------
 
-/// kir.toml [package] 섹션
+/// gleam.toml [package] 섹션
 pub type PackageInfo {
   PackageInfo(
     name: String,
@@ -249,6 +251,8 @@ pub type PackageInfo {
     target: String,
     licences: List(String),
     repository: Result(String, Nil),
+    /// gleam.toml links 배열: [(title, href)]
+    links: List(#(String, String)),
   )
 }
 
@@ -292,6 +296,8 @@ pub type KirConfig {
     git_dev_deps: List(GitDep),
     url_deps: List(UrlDep),
     url_dev_deps: List(UrlDep),
+    /// [npm-package] 섹션 raw TOML — package.json passthrough
+    npm_package: Dict(String, Toml),
   )
 }
 

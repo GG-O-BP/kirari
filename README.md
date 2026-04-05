@@ -1,6 +1,16 @@
 # kirari
 
-A unified package manager for Gleam. Extends `gleam.toml` with `[npm-dependencies]`, `[overrides]`, and `[security]` sections to manage both Hex and npm dependencies in one workflow. Run it with the `kir` command.
+## DO NOT USE THIS
+
+**This is an experimental project built purely for learning purposes. Do not use it.**
+
+**Use the official Gleam tooling (`gleam add`, `gleam build`, etc.) for all your projects.**
+
+This project exists solely to explore package manager internals (PubGrub resolution, content-addressable storage, supply chain security) by implementing them in Gleam. It is not intended to be used as a real tool, nor to replace or compete with Gleam's built-in package manager. It will not be maintained for practical use.
+
+---
+
+An experimental package manager for Gleam. Extends `gleam.toml` with `[npm-dependencies]`, `[overrides]`, and `[security]` sections to manage both Hex and npm dependencies in one workflow. Run it with the `kir` command.
 
 Written in Gleam, targeting Erlang (BEAM).
 

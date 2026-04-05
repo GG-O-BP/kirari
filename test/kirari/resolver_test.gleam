@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/list
 import gleeunit
 import kirari/resolver.{type ResolverError, type VersionInfo, VersionInfo}
@@ -640,6 +641,7 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
       target: "erlang",
       licences: [],
       repository: Error(Nil),
+      links: [],
     ),
     hex_deps: list.filter(deps, fn(d) { d.registry == Hex && !d.dev }),
     hex_dev_deps: list.filter(deps, fn(d) { d.registry == Hex && d.dev }),
@@ -655,6 +657,7 @@ fn test_config(deps: List(types.Dependency)) -> KirConfig {
     git_dev_deps: [],
     url_deps: [],
     url_dev_deps: [],
+    npm_package: dict.new(),
   )
 }
 

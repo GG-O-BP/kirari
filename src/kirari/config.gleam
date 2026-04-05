@@ -3,10 +3,13 @@
 //// kirari 확장 섹션([npm-dependencies], [dev-npm-dependencies], [security])을 통합 관리
 
 import gleam/dict.{type Dict}
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
+import gleam/time/calendar
+import gleam/time/duration
 import kirari/types.{
   type Dependency, type GitDep, type KirConfig, type Override, type PackageInfo,
   type PathDep, type Registry, type SecurityConfig, type UrlDep, Dependency,
@@ -81,6 +84,11 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
   let url_deps = decode_url_deps_from_table(doc, ["url-dependencies"], False)
   let url_dev_deps =
     decode_url_deps_from_table(doc, ["dev-url-dependencies"], True)
+  // npm package.json passthrough: [npm-package]
+  let npm_package = case tom.get_table(doc, ["npm-package"]) {
+    Ok(table) -> table
+    Error(_) -> dict.new()
+  }
   Ok(KirConfig(
     package: package,
     hex_deps: hex_deps,
@@ -97,6 +105,7 @@ fn decode_config(doc: Dict(String, Toml)) -> Result(KirConfig, ConfigError) {
     git_dev_deps: git_dev_deps,
     url_deps: url_deps,
     url_dev_deps: url_dev_deps,
+    npm_package: npm_package,
   ))
 }
 
@@ -113,6 +122,7 @@ fn decode_package_info(
   let target = tom.get_string(doc, ["target"]) |> result.unwrap("erlang")
   let licences = decode_string_array(doc, ["licences"])
   let repository = decode_repository(doc)
+  let links = decode_links(doc)
   Ok(PackageInfo(
     name: name,
     version: version,
@@ -120,6 +130,7 @@ fn decode_package_info(
     target: target,
     licences: licences,
     repository: repository,
+    links: links,
   ))
 }
 
@@ -137,6 +148,23 @@ fn decode_repository(doc: Dict(String, Toml)) -> Result(String, Nil) {
     Error(_) ->
       tom.get_string(doc, ["repository"])
       |> result.map_error(fn(_) { Nil })
+  }
+}
+
+fn decode_links(doc: Dict(String, Toml)) -> List(#(String, String)) {
+  case tom.get_array(doc, ["links"]) {
+    Ok(items) ->
+      list.filter_map(items, fn(item) {
+        case item {
+          tom.InlineTable(t) ->
+            case tom.get_string(t, ["title"]), tom.get_string(t, ["href"]) {
+              Ok(title), Ok(href) -> Ok(#(title, href))
+              _, _ -> Error(Nil)
+            }
+          _ -> Error(Nil)
+        }
+      })
+    Error(_) -> []
   }
 }
 
@@ -440,6 +468,7 @@ pub fn write_config(
 pub fn encode_config(config: KirConfig) -> String {
   [
     encode_top_level(config.package),
+    encode_links(config.package.links),
     encode_repository(config.package),
     encode_dep_section("dependencies", config.hex_deps, config.path_deps),
     encode_dep_section(
@@ -457,6 +486,7 @@ pub fn encode_config(config: KirConfig) -> String {
     encode_override_section("npm-overrides", config.overrides, Npm),
     encode_security_section(config.security, config.download),
     encode_engines_section(config.engines),
+    encode_npm_package_section(config.npm_package),
   ]
   |> list.filter(fn(s) { s != "" })
   |> string.join("\n")
@@ -698,6 +728,189 @@ fn encode_engines_section(engines: types.EnginesConfig) -> String {
   case lines {
     [] -> ""
     _ -> "[engines]\n" <> string.join(list.reverse(lines), "\n") <> "\n"
+  }
+}
+
+/// links 배열 인코딩
+fn encode_links(links: List(#(String, String))) -> String {
+  case links {
+    [] -> ""
+    _ -> {
+      let entries =
+        list.map(links, fn(link) {
+          "  { title = "
+          <> quote(link.0)
+          <> ", href = "
+          <> quote(link.1)
+          <> " }"
+        })
+      "links = [\n" <> string.join(entries, ",\n") <> ",\n]\n"
+    }
+  }
+}
+
+/// [npm-package] 섹션 TOML 직렬화
+fn encode_npm_package_section(table: Dict(String, Toml)) -> String {
+  case dict.is_empty(table) {
+    True -> ""
+    False -> encode_toml_table("npm-package", table)
+  }
+}
+
+/// Dict(String, Toml)을 TOML 섹션으로 직렬화 (재귀)
+fn encode_toml_table(prefix: String, table: Dict(String, Toml)) -> String {
+  let entries =
+    dict.to_list(table) |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+  // 스칼라 값(Table/ArrayOfTables가 아닌 것)과 하위 테이블 분리
+  let #(scalars, sub_tables) =
+    list.partition(entries, fn(entry) {
+      case entry.1 {
+        tom.Table(_) -> False
+        tom.ArrayOfTables(_) -> False
+        _ -> True
+      }
+    })
+  // 스칼라 값 출력
+  let scalar_lines =
+    list.map(scalars, fn(entry) {
+      quote_key(entry.0) <> " = " <> encode_toml_value(entry.1)
+    })
+  let header_section = case scalar_lines {
+    [] -> ""
+    _ -> "[" <> prefix <> "]\n" <> string.join(scalar_lines, "\n") <> "\n"
+  }
+  // 하위 테이블 출력 (재귀)
+  let sub_sections =
+    list.map(sub_tables, fn(entry) {
+      let sub_prefix = prefix <> "." <> quote_key(entry.0)
+      case entry.1 {
+        tom.Table(sub) -> encode_toml_table(sub_prefix, sub)
+        tom.ArrayOfTables(tables) ->
+          list.map(tables, fn(t) { encode_toml_aot_entry(sub_prefix, t) })
+          |> string.join("\n")
+        _ -> ""
+      }
+    })
+  [header_section, ..sub_sections]
+  |> list.filter(fn(s) { s != "" })
+  |> string.join("\n")
+}
+
+/// [[section]] 엔트리 하나 직렬화
+fn encode_toml_aot_entry(prefix: String, table: Dict(String, Toml)) -> String {
+  let entries =
+    dict.to_list(table) |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+  let lines =
+    list.map(entries, fn(entry) {
+      quote_key(entry.0) <> " = " <> encode_toml_value(entry.1)
+    })
+  "[[" <> prefix <> "]]\n" <> string.join(lines, "\n") <> "\n"
+}
+
+/// TOML 값 직렬화 (스칼라 + 인라인)
+fn encode_toml_value(value: Toml) -> String {
+  case value {
+    tom.String(s) -> quote(s)
+    tom.Int(i) -> int.to_string(i)
+    tom.Float(f) -> float_to_string(f)
+    tom.Bool(True) -> "true"
+    tom.Bool(False) -> "false"
+    tom.Infinity(tom.Positive) -> "inf"
+    tom.Infinity(tom.Negative) -> "-inf"
+    tom.Nan(tom.Positive) -> "nan"
+    tom.Nan(tom.Negative) -> "-nan"
+    tom.Array(items) ->
+      "[" <> string.join(list.map(items, encode_toml_value), ", ") <> "]"
+    tom.InlineTable(t) -> encode_toml_inline_table(t)
+    tom.Table(t) -> encode_toml_inline_table(t)
+    tom.ArrayOfTables(tables) ->
+      "["
+      <> string.join(
+        list.map(tables, fn(t) { encode_toml_inline_table(t) }),
+        ", ",
+      )
+      <> "]"
+    tom.Date(d) -> encode_toml_date(d)
+    tom.Time(t) -> encode_toml_time(t)
+    tom.DateTime(d, t, offset) ->
+      encode_toml_date(d)
+      <> "T"
+      <> encode_toml_time(t)
+      <> encode_toml_offset(offset)
+  }
+}
+
+/// 인라인 테이블 직렬화
+fn encode_toml_inline_table(table: Dict(String, Toml)) -> String {
+  let entries =
+    dict.to_list(table)
+    |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+    |> list.map(fn(entry) {
+      quote_key(entry.0) <> " = " <> encode_toml_value(entry.1)
+    })
+  "{ " <> string.join(entries, ", ") <> " }"
+}
+
+fn float_to_string(f: Float) -> String {
+  let s = string.inspect(f)
+  case string.contains(s, ".") {
+    True -> s
+    False -> s <> ".0"
+  }
+}
+
+fn encode_toml_date(d: calendar.Date) -> String {
+  pad4(d.year)
+  <> "-"
+  <> pad2(calendar.month_to_int(d.month))
+  <> "-"
+  <> pad2(d.day)
+}
+
+fn encode_toml_time(t: calendar.TimeOfDay) -> String {
+  pad2(t.hours) <> ":" <> pad2(t.minutes) <> ":" <> pad2(t.seconds)
+}
+
+fn encode_toml_offset(offset: tom.Offset) -> String {
+  case offset {
+    tom.Local -> ""
+    tom.Offset(dur) -> {
+      let total_seconds = duration.to_seconds(dur) |> float.truncate
+      let total_minutes = total_seconds / 60
+      case total_minutes {
+        0 -> "Z"
+        _ -> {
+          let sign = case total_minutes > 0 {
+            True -> "+"
+            False -> "-"
+          }
+          let abs_min = int.absolute_value(total_minutes)
+          sign <> pad2(abs_min / 60) <> ":" <> pad2(abs_min % 60)
+        }
+      }
+    }
+  }
+}
+
+fn pad2(n: Int) -> String {
+  case n < 10 {
+    True -> "0" <> int.to_string(n)
+    False -> int.to_string(n)
+  }
+}
+
+fn pad4(n: Int) -> String {
+  case n < 10 {
+    True -> "000" <> int.to_string(n)
+    False ->
+      case n < 100 {
+        True -> "00" <> int.to_string(n)
+        False ->
+          case n < 1000 {
+            True -> "0" <> int.to_string(n)
+            False -> int.to_string(n)
+          }
+      }
   }
 }
 

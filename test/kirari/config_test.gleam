@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/list
 import gleam/string
 import gleeunit
@@ -19,6 +20,7 @@ fn sample_config() -> KirConfig {
       target: "erlang",
       licences: ["MIT"],
       repository: Ok("github:user/repo"),
+      links: [],
     ),
     hex_deps: [
       Dependency(
@@ -64,6 +66,7 @@ fn sample_config() -> KirConfig {
     git_dev_deps: [],
     url_deps: [],
     url_dev_deps: [],
+    npm_package: dict.new(),
   )
 }
 
@@ -133,6 +136,7 @@ pub fn add_dependency_test() {
         target: "erlang",
         licences: [],
         repository: Error(Nil),
+        links: [],
       ),
       hex_deps: [],
       hex_dev_deps: [],
@@ -148,6 +152,7 @@ pub fn add_dependency_test() {
       git_dev_deps: [],
       url_deps: [],
       url_dev_deps: [],
+      npm_package: dict.new(),
     )
   let dep =
     Dependency(
@@ -192,6 +197,7 @@ pub fn add_dependency_upsert_test() {
         target: "erlang",
         licences: [],
         repository: Error(Nil),
+        links: [],
       ),
       hex_deps: [dep_v1],
       hex_dev_deps: [],
@@ -207,6 +213,7 @@ pub fn add_dependency_upsert_test() {
       git_dev_deps: [],
       url_deps: [],
       url_dev_deps: [],
+      npm_package: dict.new(),
     )
   let updated = config.add_dependency(cfg, dep_v2)
   assert list.length(updated.hex_deps) == 1
@@ -233,6 +240,7 @@ pub fn remove_dependency_test() {
         target: "erlang",
         licences: [],
         repository: Error(Nil),
+        links: [],
       ),
       hex_deps: [],
       hex_dev_deps: [],
@@ -248,7 +256,98 @@ pub fn remove_dependency_test() {
       git_dev_deps: [],
       url_deps: [],
       url_dev_deps: [],
+      npm_package: dict.new(),
     )
   let updated = config.remove_dependency(cfg, "foo", Npm)
   assert updated.npm_deps == []
+}
+
+// ---------------------------------------------------------------------------
+// links 파싱
+// ---------------------------------------------------------------------------
+
+pub fn parse_config_links_test() {
+  let toml =
+    "name = \"t\"\nversion = \"0.1.0\"\n"
+    <> "links = [\n"
+    <> "  { title = \"Website\", href = \"https://example.com\" },\n"
+    <> "  { title = \"Docs\", href = \"https://docs.example.com\" },\n"
+    <> "]\n"
+  let assert Ok(cfg) = config.parse_config(toml)
+  assert cfg.package.links
+    == [
+      #("Website", "https://example.com"),
+      #("Docs", "https://docs.example.com"),
+    ]
+}
+
+pub fn parse_config_no_links_test() {
+  let toml = "name = \"t\"\nversion = \"0.1.0\"\n"
+  let assert Ok(cfg) = config.parse_config(toml)
+  assert cfg.package.links == []
+}
+
+// ---------------------------------------------------------------------------
+// [npm-package] 파싱
+// ---------------------------------------------------------------------------
+
+pub fn parse_config_npm_package_test() {
+  let toml =
+    "name = \"t\"\nversion = \"0.1.0\"\n"
+    <> "[npm-package]\n"
+    <> "type = \"module\"\n"
+    <> "main = \"./dist/index.js\"\n"
+    <> "private = true\n"
+    <> "keywords = [\"gleam\", \"npm\"]\n"
+  let assert Ok(cfg) = config.parse_config(toml)
+  assert dict.size(cfg.npm_package) == 4
+}
+
+pub fn parse_config_npm_package_nested_test() {
+  let toml =
+    "name = \"t\"\nversion = \"0.1.0\"\n"
+    <> "[npm-package]\n"
+    <> "type = \"module\"\n"
+    <> "[npm-package.scripts]\n"
+    <> "build = \"tsc\"\n"
+    <> "test = \"jest\"\n"
+    <> "[npm-package.bin]\n"
+    <> "myapp = \"./bin/cli.js\"\n"
+  let assert Ok(cfg) = config.parse_config(toml)
+  assert dict.size(cfg.npm_package) == 3
+}
+
+pub fn parse_config_npm_package_empty_test() {
+  let toml = "name = \"t\"\nversion = \"0.1.0\"\n"
+  let assert Ok(cfg) = config.parse_config(toml)
+  assert dict.is_empty(cfg.npm_package)
+}
+
+// ---------------------------------------------------------------------------
+// [npm-package] round-trip
+// ---------------------------------------------------------------------------
+
+pub fn config_roundtrip_npm_package_test() {
+  let toml =
+    "name = \"t\"\nversion = \"0.1.0\"\n"
+    <> "[npm-package]\n"
+    <> "main = \"./dist/index.js\"\n"
+    <> "private = true\n"
+    <> "type = \"module\"\n"
+  let assert Ok(original) = config.parse_config(toml)
+  let encoded = config.encode_config(original)
+  let assert Ok(reparsed) = config.parse_config(encoded)
+  assert dict.size(reparsed.npm_package) == dict.size(original.npm_package)
+}
+
+pub fn config_roundtrip_links_test() {
+  let toml =
+    "name = \"t\"\nversion = \"0.1.0\"\n"
+    <> "links = [\n"
+    <> "  { title = \"Website\", href = \"https://example.com\" },\n"
+    <> "]\n"
+  let assert Ok(original) = config.parse_config(toml)
+  let encoded = config.encode_config(original)
+  let assert Ok(reparsed) = config.parse_config(encoded)
+  assert reparsed.package.links == original.package.links
 }

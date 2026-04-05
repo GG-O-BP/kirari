@@ -24,7 +24,8 @@
     set_log_level/1,
     get_log_level/0,
     make_temp_dir_system/0,
-    http_get_binary/1
+    http_get_binary/1,
+    json_pretty/1
 ]).
 
 %% tar/tgz 압축 해제
@@ -279,6 +280,54 @@ http_get_binary(Url) when is_binary(Url) ->
         {error, Reason} ->
             {error, list_to_binary(io_lib:format("~p", [Reason]))}
     end.
+
+%% JSON pretty-print — compact JSON 문자열을 2-space indent로 재포맷
+%% 키 순서를 보존 (decode 없이 문자열 레벨에서 처리)
+json_pretty(Iodata) ->
+    Bin = iolist_to_binary(Iodata),
+    json_indent(Bin, 0, false, <<>>).
+
+json_indent(<<>>, _, _, Acc) -> Acc;
+%% 문자열 내부 이스케이프: \" 등 그대로 통과
+json_indent(<<$\\, C, Rest/binary>>, Lvl, true, Acc) ->
+    json_indent(Rest, Lvl, true, <<Acc/binary, $\\, C>>);
+%% 따옴표: 문자열 진입/탈출 토글
+json_indent(<<$", Rest/binary>>, Lvl, InStr, Acc) ->
+    json_indent(Rest, Lvl, not InStr, <<Acc/binary, $">>);
+%% 문자열 내부: 그대로 통과
+json_indent(<<C, Rest/binary>>, Lvl, true, Acc) ->
+    json_indent(Rest, Lvl, true, <<Acc/binary, C>>);
+%% 빈 객체/배열
+json_indent(<<${, $}, Rest/binary>>, Lvl, false, Acc) ->
+    json_indent(Rest, Lvl, false, <<Acc/binary, "{}">>);
+json_indent(<<$[, $], Rest/binary>>, Lvl, false, Acc) ->
+    json_indent(Rest, Lvl, false, <<Acc/binary, "[]">>);
+%% 여는 중괄호/대괄호
+json_indent(<<${, Rest/binary>>, Lvl, false, Acc) ->
+    NL = Lvl + 1,
+    json_indent(Rest, NL, false, <<Acc/binary, "{\n", (indent_str(NL))/binary>>);
+json_indent(<<$[, Rest/binary>>, Lvl, false, Acc) ->
+    NL = Lvl + 1,
+    json_indent(Rest, NL, false, <<Acc/binary, "[\n", (indent_str(NL))/binary>>);
+%% 닫는 중괄호/대괄호
+json_indent(<<$}, Rest/binary>>, Lvl, false, Acc) ->
+    NL = Lvl - 1,
+    json_indent(Rest, NL, false, <<Acc/binary, "\n", (indent_str(NL))/binary, "}">>);
+json_indent(<<$], Rest/binary>>, Lvl, false, Acc) ->
+    NL = Lvl - 1,
+    json_indent(Rest, NL, false, <<Acc/binary, "\n", (indent_str(NL))/binary, "]">>);
+%% 쉼표
+json_indent(<<$,, Rest/binary>>, Lvl, false, Acc) ->
+    json_indent(Rest, Lvl, false, <<Acc/binary, ",\n", (indent_str(Lvl))/binary>>);
+%% 콜론
+json_indent(<<$:, Rest/binary>>, Lvl, false, Acc) ->
+    json_indent(Rest, Lvl, false, <<Acc/binary, ": ">>);
+%% 그 외 문자
+json_indent(<<C, Rest/binary>>, Lvl, false, Acc) ->
+    json_indent(Rest, Lvl, false, <<Acc/binary, C>>).
+
+indent_str(0) -> <<>>;
+indent_str(N) -> binary:copy(<<"  ">>, N).
 
 %% UUID v4 생성 (RFC 4122)
 uuid_v4() ->
