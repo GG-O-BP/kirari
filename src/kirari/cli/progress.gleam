@@ -56,7 +56,7 @@ pub fn start(config: ProgressConfig) -> ProgressHandle {
   case config.quiet || config.total_packages == 0 {
     True -> Inactive
     False -> {
-      let subject = process.new_subject()
+      let callback = process.new_subject()
       let state =
         ProgressState(
           total: config.total_packages,
@@ -70,8 +70,16 @@ pub fn start(config: ProgressConfig) -> ProgressHandle {
           is_tty: platform.is_tty(),
           rendered: False,
         )
-      let _ = process.spawn(fn() { progress_loop(state, subject) })
-      Active(subject: subject)
+      let _ =
+        process.spawn(fn() {
+          let subject = process.new_subject()
+          process.send(callback, subject)
+          progress_loop(state, subject)
+        })
+      case process.receive(callback, 1000) {
+        Ok(subject) -> Active(subject: subject)
+        Error(_) -> Inactive
+      }
     }
   }
 }
