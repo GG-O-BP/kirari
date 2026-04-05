@@ -6,6 +6,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/resolver
+import kirari/semver
 import kirari/types.{type KirConfig, type KirLock, Hex}
 import simplifile
 
@@ -77,11 +78,11 @@ pub fn write_build_metadata(
 pub fn to_package_json(config: KirConfig) -> String {
   let deps =
     list.map(config.npm_deps, fn(d) {
-      #(d.name, json.string(d.version_constraint))
+      #(d.name, json.string(semver.hex_to_npm_constraint(d.version_constraint)))
     })
   let dev_deps =
     list.map(config.npm_dev_deps, fn(d) {
-      #(d.name, json.string(d.version_constraint))
+      #(d.name, json.string(semver.hex_to_npm_constraint(d.version_constraint)))
     })
   let entries = case deps {
     [] -> []

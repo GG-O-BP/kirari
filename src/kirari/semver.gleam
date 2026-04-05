@@ -781,6 +781,28 @@ fn normalize_hex_parts(
   }
 }
 
+/// Hex 형식 제약을 npm package.json 형식으로 변환
+/// ">= 1.0.0 and < 2.0.0" → ">=1.0.0 <2.0.0"
+/// ">= 0.0.0" → "*"
+pub fn hex_to_npm_constraint(constraint: String) -> String {
+  case
+    string.starts_with(constraint, "^")
+    || string.starts_with(constraint, "~")
+    || constraint == "*"
+    || string.contains(constraint, "||")
+  {
+    True -> constraint
+    False ->
+      case constraint {
+        ">= 0.0.0" -> "*"
+        _ ->
+          constraint
+          |> string.replace(" or ", " || ")
+          |> string.replace(" and ", " ")
+      }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // VersionRange 생성자
 // ---------------------------------------------------------------------------
