@@ -36,7 +36,7 @@ jobs:
 
       # 2. kir 설치 (Linux)
       - name: Install kir (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: |
           cp scripts/kir build/erlang-shipment/kir
           chmod +x build/erlang-shipment/kir
@@ -46,7 +46,7 @@ jobs:
 
       # 2. kir 설치 (Windows)
       - name: Install kir (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Copy-Item scripts\kir.bat build\erlang-shipment\kir.bat
@@ -58,14 +58,14 @@ jobs:
 
       # 3. kir로 검증
       - name: Verify with kir (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: |
           kir install --frozen
           kir check
           kir test
 
       - name: Verify with kir (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: cmd
         run: |
           set PATH=C:\kirari;%PATH%
@@ -75,7 +75,7 @@ jobs:
 
       # 4. kir로 최종 릴리스 빌드
       - name: Release build (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: |
           kir clean
           kir install
@@ -84,7 +84,7 @@ jobs:
           chmod +x build/erlang-shipment/kir
 
       - name: Release build (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: cmd
         run: |
           set PATH=C:\kirari;%PATH%
@@ -96,11 +96,11 @@ jobs:
 
       # 5. 아카이브
       - name: Archive (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: tar -czf kirari-${{ matrix.name }}.tar.gz -C build erlang-shipment
 
       - name: Archive (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path build/erlang-shipment -DestinationPath kirari-${{ matrix.name }}.zip
 
