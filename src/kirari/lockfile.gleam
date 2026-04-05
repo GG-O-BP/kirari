@@ -98,6 +98,10 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
       let platform = decode_platform(table)
       let license = tom.get_string(table, ["license"]) |> result.unwrap("")
       let dev = tom.get_bool(table, ["dev"]) |> result.unwrap(False)
+      let pkg_name = case tom.get_string(table, ["package_name"]) {
+        Ok(pn) -> Ok(pn)
+        Error(_) -> Error(Nil)
+      }
       Ok(ResolvedPackage(
         name: name,
         version: version,
@@ -107,6 +111,7 @@ fn decode_one_package(toml_val: Toml) -> Result(ResolvedPackage, Nil) {
         platform: platform,
         license: license,
         dev: dev,
+        package_name: pkg_name,
       ))
     }
     _ -> Error(Nil)
@@ -186,6 +191,7 @@ fn encode_package(pkg: ResolvedPackage) -> String {
     <> "name = "
     <> quote(pkg.name)
     <> "\n"
+    <> encode_package_name_field(pkg.package_name)
     <> encode_platform_os(pkg.platform)
     <> "registry = "
     <> quote(types.registry_to_string(pkg.registry))
@@ -197,6 +203,13 @@ fn encode_package(pkg: ResolvedPackage) -> String {
     <> quote(pkg.version)
     <> "\n"
   base
+}
+
+fn encode_package_name_field(pn: Result(String, Nil)) -> String {
+  case pn {
+    Ok(name) -> "package_name = " <> quote(name) <> "\n"
+    Error(_) -> ""
+  }
 }
 
 fn encode_license(license: String) -> String {
@@ -296,11 +309,17 @@ pub fn find_package(
 // ---------------------------------------------------------------------------
 
 /// 기존 lock과 새로 해결된 패키지 목록이 일치하는지 검증
+/// fingerprint는 비교에서 제외 (패키지 내용만 비교)
 pub fn verify_frozen(
   existing: KirLock,
   resolved: List(ResolvedPackage),
 ) -> Result(Nil, LockfileError) {
-  let new_lock = from_packages(resolved)
+  let new_lock =
+    KirLock(
+      version: existing.version,
+      packages: list.sort(resolved, types.compare_packages),
+      config_fingerprint: existing.config_fingerprint,
+    )
   let existing_encoded = encode(existing)
   let new_encoded = encode(new_lock)
   case existing_encoded == new_encoded {

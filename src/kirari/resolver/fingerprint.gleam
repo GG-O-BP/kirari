@@ -36,7 +36,13 @@ pub fn matches(stored_hash: String, config: KirConfig) -> Bool {
 
 fn deps_lines(prefix: String, deps: List(types.Dependency)) -> List(String) {
   deps
-  |> list.map(fn(d) { prefix <> ":" <> d.name <> ":" <> d.version_constraint })
+  |> list.map(fn(d) {
+    let base = prefix <> ":" <> d.name <> ":" <> d.version_constraint
+    case d.package_name {
+      Ok(real) -> base <> ":alias=" <> real
+      Error(_) -> base
+    }
+  })
 }
 
 fn overrides_lines(overrides: List(Override)) -> List(String) {

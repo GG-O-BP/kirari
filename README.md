@@ -39,6 +39,9 @@ Written in Gleam, targeting Erlang (BEAM).
 - **Verbose/debug logging** — `--verbose` shows detailed progress (resolution decisions, fingerprint comparisons, lockfile writes); `--debug` adds internal traces; `KIR_LOG` env var as alternative; 4-level system (Silent/Normal/Verbose/Debug) backed by Erlang `persistent_term`
 - **Lockfile version migration** — automatic schema migration on read (v1 → v2 → ...); rejects future versions with clear upgrade message; `--frozen` mode blocks migration to preserve CI reproducibility
 - **Engine constraints** — `[engines]` section in `gleam.toml` declares required Gleam, Erlang/OTP, and Node.js versions; `kir install` validates before resolution and fails with clear mismatch messages; `kir doctor` shows constraint status
+- **npm package aliases** — `my-react = "npm:react@^18.0.0"` installs a package under a different local name; supports scoped packages (`npm:@scope/pkg@^1.0`); alias-aware resolver, lockfile, and config round-trip
+- **Init templates** — `kir init --template=advanced` applies predefined security settings (provenance=require, license allow-list) and engine constraints; `basic` template is the default
+- **Hash pinning** — `.kir-hashes` independent TOML allowlist for per-package SHA256 verification; multiple known-good hashes per package for hash rotation; `kir hash pin <pkg>` and `kir hash verify` CLI commands; pipeline verifies pins before store
 - **Lock conflict resolution** — `kir lock resolve` automatically detects git merge conflict markers in `kir.lock`, re-resolves from `gleam.toml`, and writes a clean lockfile with diff preview; supports `--dry-run`
 - **FFI detection** — warns about undeclared npm imports in `.mjs` files after install
 - **`gleam build` compatible** — gleam ignores kirari sections; auto-generates `manifest.toml` + `packages.toml`
@@ -113,7 +116,7 @@ gleam build
 
 | Command | Description |
 |---------|-------------|
-| `kir init` | Add kirari sections to `gleam.toml`, merge `package.json` npm deps |
+| `kir init [--template=basic\|advanced]` | Add kirari sections to `gleam.toml`, merge `package.json` npm deps, apply template |
 | `kir install [--frozen] [--exclude-newer=<TS>] [--offline] [--quiet] [--verify] [--verbose] [--debug] [--max-retries=<N>] [--timeout=<S>] [--parallel=<N>]` | Resolve and install dependencies, generate `kir.lock` |
 | `kir update [pkg...]` | Update all or specific dependencies to latest compatible versions |
 | `kir add <pkg[@version]> [--npm] [--dev]` | Add a dependency and install (`kir add gleam_json@3`, `kir add @types/node --npm`, `kir add express@latest --npm`) |
@@ -136,6 +139,8 @@ gleam build
 | `kir license [--json]` | Audit dependency licenses against allow/deny policy |
 | `kir audit [--json] [--severity=<LEVEL>]` | Audit dependencies for known vulnerabilities (GHSA + npm advisory) |
 | `kir lock resolve [--dry-run]` | Re-resolve `kir.lock` from `gleam.toml` (fixes git merge conflicts) |
+| `kir hash pin <pkg>` | Pin current SHA256 of a package to `.kir-hashes` allowlist |
+| `kir hash verify` | Verify installed packages against `.kir-hashes` allowlist |
 
 ### Build & Run
 
@@ -250,6 +255,7 @@ gleeunit = ">= 1.0.0 and < 2.0.0"
 [npm-dependencies]
 highlight.js = "^11.0.0"           # npm caret syntax
 lodash = ">= 4.17.0 and < 5.0.0"  # Hex-style syntax also works
+my-react = "npm:react@^18.0.0"     # npm package alias
 
 [dev-npm-dependencies]
 @types/node = "^18.0.0"
@@ -299,6 +305,7 @@ kirari accepts both Hex and npm version constraint formats in any dependency sec
 | Exact | `"== 1.0.0"` or `"1.0.0"` | Exactly `1.0.0` |
 | Any | `"*"` or `""` | Any version |
 | npm dist-tag | `"latest"`, `"next"`, `"canary"` | Resolved to concrete version at `kir add` time |
+| npm alias | `"npm:react@^18.0.0"` | Install `react` under a different local name |
 
 ### Dependency overrides
 
@@ -375,7 +382,7 @@ sha256 = "a1b2c3d4..."
 version = "0.21.5"
 ```
 
-Fields `dev`, `has_scripts`, `license`, `os`, and `cpu` are only emitted when non-empty/applicable. `dev = true` marks packages only reachable from dev dependencies (not in production dependency graph). `config-fingerprint` is the SHA256 of all resolution-affecting config inputs (deps, overrides, exclude-newer) — used for incremental resolution to skip re-solving when nothing changed.
+Fields `dev`, `has_scripts`, `license`, `os`, `cpu`, and `package_name` are only emitted when non-empty/applicable. `package_name` stores the real npm registry name for aliased packages (e.g., `package_name = "react"` when the local name is `my-react`). `dev = true` marks packages only reachable from dev dependencies (not in production dependency graph). `config-fingerprint` is the SHA256 of all resolution-affecting config inputs (deps, overrides, exclude-newer) — used for incremental resolution to skip re-solving when nothing changed.
 
 The lockfile `version` field tracks the schema version (currently 2). Older lockfiles are automatically migrated on read. Lockfiles from newer versions of kirari are rejected with a clear upgrade message. `kir install --frozen` rejects lockfiles that need migration.
 
@@ -462,6 +469,9 @@ gleam build (reads gleam.toml + manifest.toml, skips download)
 | **Download configuration** | Not available | `[security] max-retries`/`timeout`/`parallel`/`backoff` + CLI flag overrides |
 | **Lock conflict resolution** | Not available | `kir lock resolve` detects merge markers, re-resolves from gleam.toml, writes clean lockfile |
 | **Selective store cleanup** | Not available | `kir clean --store --only=pkg --keep=pkg --dry-run --max-age=N` |
+| **npm package aliases** | Not available | `"npm:react@^18"` syntax, alias-aware resolver/lockfile/installer |
+| **Init templates** | Not available | `kir init --template=advanced` applies security + engine presets |
+| **Hash pinning** | Not available | `.kir-hashes` independent allowlist, `kir hash pin/verify`, pipeline integration |
 | **Written in** | Rust | Gleam |
 
 ## Architecture
@@ -497,7 +507,8 @@ src/kirari/
     partial_solution.gleam Assignment tracking, decision levels, backtracking
     fingerprint.gleam     Config fingerprint for incremental resolution (SHA256 of deps+overrides)
     conflict.gleam        Conflict analysis — structured causes, alternative suggestions, rich formatting
-  lockfile.gleam          kir.lock read/write + structured diff
+  hashpin.gleam           Hash pinning — .kir-hashes independent allowlist, pipeline verification
+  lockfile.gleam          kir.lock read/write + structured diff + merge conflict detection
   pipeline.gleam          Download → verify → store → install orchestration
   security.gleam          SHA256, path validation, exclude-newer, SRI integrity, Sigstore ECDSA
   registry/hex.gleam      Hex.pm API client (versions, deps, license)

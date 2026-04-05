@@ -26,6 +26,7 @@ fn sample_config() -> KirConfig {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     hex_dev_deps: [
@@ -35,6 +36,7 @@ fn sample_config() -> KirConfig {
         registry: Hex,
         dev: True,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     npm_deps: [
@@ -44,6 +46,7 @@ fn sample_config() -> KirConfig {
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     npm_dev_deps: [],

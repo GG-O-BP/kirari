@@ -62,6 +62,7 @@ pub fn to_dependencies(detections: List(FfiDetection)) -> List(Dependency) {
       registry: Npm,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   })
 }

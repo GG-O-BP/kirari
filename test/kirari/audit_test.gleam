@@ -21,6 +21,7 @@ fn hex_pkg(name: String, version: String) -> ResolvedPackage {
     platform: Error(Nil),
     license: "MIT",
     dev: False,
+    package_name: Error(Nil),
   )
 }
 
@@ -34,6 +35,7 @@ fn npm_pkg(name: String, version: String) -> ResolvedPackage {
     platform: Error(Nil),
     license: "MIT",
     dev: False,
+    package_name: Error(Nil),
   )
 }
 

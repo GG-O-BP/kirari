@@ -156,18 +156,65 @@ fn decode_deps_from_table(
         let #(name, value) = entry
         case value {
           tom.String(constraint) ->
-            Ok(Dependency(
-              name: name,
-              version_constraint: constraint,
-              registry: registry,
-              dev: dev,
-              optional: False,
-            ))
+            case parse_alias_constraint(constraint, registry) {
+              Ok(#(real_name, real_constraint)) ->
+                Ok(Dependency(
+                  name: name,
+                  version_constraint: real_constraint,
+                  registry: registry,
+                  dev: dev,
+                  optional: False,
+                  package_name: Ok(real_name),
+                ))
+              Error(_) ->
+                Ok(Dependency(
+                  name: name,
+                  version_constraint: constraint,
+                  registry: registry,
+                  dev: dev,
+                  optional: False,
+                  package_name: Error(Nil),
+                ))
+            }
           _ -> Error(Nil)
         }
       })
       |> list.sort(fn(a, b) { string.compare(a.name, b.name) })
     Error(_) -> []
+  }
+}
+
+/// "npm:react@^18.0.0" 또는 "npm:@scope/pkg@^1.0" 형식 파싱
+fn parse_alias_constraint(
+  value: String,
+  registry: Registry,
+) -> Result(#(String, String), Nil) {
+  case registry {
+    Npm ->
+      case string.starts_with(value, "npm:") {
+        True -> {
+          let rest = string.drop_start(value, 4)
+          case string.starts_with(rest, "@") {
+            // 스코프 패키지: npm:@scope/name@constraint
+            True -> {
+              let without_at = string.drop_start(rest, 1)
+              case string.split_once(without_at, "@") {
+                Ok(#(scope_and_name, constraint)) ->
+                  Ok(#("@" <> scope_and_name, constraint))
+                Error(_) -> Ok(#(rest, "*"))
+              }
+            }
+            // 일반 패키지: npm:name@constraint
+            False ->
+              case string.split_once(rest, "@") {
+                Ok(#(name, constraint)) -> Ok(#(name, constraint))
+                Error(_) -> Ok(#(rest, "*"))
+              }
+          }
+        }
+        False -> Error(Nil)
+      }
+    Hex -> Error(Nil)
   }
 }
 
@@ -366,10 +413,12 @@ fn encode_dep_section(
       let reg_lines =
         list.sort(deps, fn(a, b) { string.compare(a.name, b.name) })
         |> list.map(fn(dep) {
-          #(
-            dep.name,
-            quote_key(dep.name) <> " = " <> quote(dep.version_constraint),
-          )
+          let value = case dep.package_name {
+            Ok(real_name) ->
+              quote("npm:" <> real_name <> "@" <> dep.version_constraint)
+            Error(_) -> quote(dep.version_constraint)
+          }
+          #(dep.name, quote_key(dep.name) <> " = " <> value)
         })
       let path_lines =
         list.sort(path_deps, fn(a, b) { string.compare(a.name, b.name) })

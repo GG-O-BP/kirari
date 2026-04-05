@@ -60,6 +60,8 @@ pub type SolverContext {
     overrides: Dict(String, String),
     /// 병렬 prefetch된 버전 캐시 — solver 시작 시 version_cache 초기값
     prefetch_cache: Dict(String, List(VersionInfoCompact)),
+    /// npm alias 매핑: local_name:registry → real_name
+    alias_map: Dict(String, String),
   )
 }
 
@@ -753,6 +755,10 @@ fn extract_solution(state: SolverState, ctx: SolverContext) -> SolveResult {
             Ok(#(name, registry)) -> {
               let version_str = semver.to_string(version)
               let vi = find_version_info(state, key, version_str)
+              let pkg_name_val = case dict.get(ctx.alias_map, key) {
+                Ok(real) -> Ok(real)
+                Error(_) -> Error(Nil)
+              }
               let pkg =
                 ResolvedPackage(
                   name: name,
@@ -763,6 +769,7 @@ fn extract_solution(state: SolverState, ctx: SolverContext) -> SolveResult {
                   platform: Error(Nil),
                   license: vi.license,
                   dev: False,
+                  package_name: pkg_name_val,
                 )
               // lock에서 sha256 복원
               let pkg = case ctx.existing_lock {

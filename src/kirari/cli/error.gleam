@@ -111,6 +111,14 @@ pub fn format_error(error: KirError) -> String {
           <> " ("
           <> types.registry_to_string(registry)
           <> ")"
+        pipeline.HashPinMismatch(name, registry, actual, _allowed) ->
+          "hash pin verification failed: "
+          <> name
+          <> " ("
+          <> types.registry_to_string(registry)
+          <> ") hash "
+          <> string.slice(actual, 0, 16)
+          <> "... not in .kir-hashes allowlist"
       }
     ExportErr(e) ->
       case e {

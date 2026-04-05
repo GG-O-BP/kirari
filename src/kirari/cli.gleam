@@ -76,6 +76,8 @@ fn run_glint(args: List(String)) -> Result(Nil, KirError) {
   |> glint.add(at: ["why"], do: why_cmd())
   |> glint.add(at: ["clean"], do: clean_cmd())
   |> glint.add(at: ["lock", "resolve"], do: lock_resolve_cmd())
+  |> glint.add(at: ["hash", "pin"], do: hash_pin_cmd())
+  |> glint.add(at: ["hash", "verify"], do: hash_verify_cmd())
   |> glint.add(at: ["diff"], do: diff_cmd())
   |> glint.add(at: ["ls"], do: ls_cmd())
   |> glint.add(at: ["doctor"], do: doctor_cmd())
@@ -186,8 +188,14 @@ fn root_cmd() -> glint.Command(Nil) {
 
 fn init_cmd() -> glint.Command(Nil) {
   use <- glint.command_help("Add kirari sections to gleam.toml")
-  glint.command(fn(_named, _args, _flags) {
-    case install.do_init(".") {
+  use template_flag <- glint.flag(
+    glint.string_flag("template")
+    |> glint.flag_default("basic")
+    |> glint.flag_help("Template: basic (default) or advanced"),
+  )
+  glint.command(fn(_named, _args, flags) {
+    let template = template_flag(flags) |> result.unwrap("basic")
+    case install.do_init_with_template(".", template) {
       Ok(_) -> Nil
       Error(e) -> output.print_error(e)
     }
@@ -447,6 +455,30 @@ fn parse_comma_list(s: String) -> List(String) {
       |> list.map(string.trim)
       |> list.filter(fn(x) { x != "" })
   }
+}
+
+fn hash_pin_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Pin current hash of a package to .kir-hashes")
+  glint.command(fn(_named, args, _flags) {
+    case args {
+      [name, ..] ->
+        case install.do_hash_pin(".", name) {
+          Ok(_) -> Nil
+          Error(e) -> output.print_error(e)
+        }
+      _ -> io.println("Usage: kir hash pin <package>")
+    }
+  })
+}
+
+fn hash_verify_cmd() -> glint.Command(Nil) {
+  use <- glint.command_help("Verify installed packages against .kir-hashes")
+  glint.command(fn(_named, _args, _flags) {
+    case install.do_hash_verify(".") {
+      Ok(_) -> Nil
+      Error(e) -> output.print_error(e)
+    }
+  })
 }
 
 fn lock_resolve_cmd() -> glint.Command(Nil) {

@@ -8,6 +8,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import kirari/cli/progress.{type ProgressHandle}
+import kirari/hashpin
 import kirari/installer
 import kirari/registry/hex
 import kirari/registry/npm
@@ -25,6 +26,12 @@ pub type PipelineError {
   InstallErr(installer.InstallerError)
   ProvenanceErr(name: String, detail: String)
   OfflinePackageMissing(name: String, version: String, registry: types.Registry)
+  HashPinMismatch(
+    name: String,
+    registry: types.Registry,
+    actual: String,
+    allowed: List(String),
+  )
 }
 
 /// pipeline 경고 타입 — cli에서 출력 담당
@@ -62,6 +69,11 @@ pub fn run(
 ) -> Result(PipelineResult, PipelineError) {
   // offline: store에 없는 패키지가 있으면 즉시 실패
   use _ <- result.try(check_offline_packages(resolve_result.packages, offline))
+  // hash pin 로드 (.kir-hashes, 없으면 빈 목록)
+  let hash_pins = case hashpin.read(project_dir) {
+    Ok(pins) -> pins
+    Error(_) -> hashpin.empty()
+  }
   // 0. npm 서명 키 로드 (npm 패키지가 있고 ProvenanceIgnore가 아닐 때만, offline 시 skip)
   let has_npm = list.any(resolve_result.packages, fn(p) { p.registry == Npm })
   let npm_keys = case has_npm && !offline {
@@ -73,6 +85,7 @@ pub fn run(
       version_infos: resolve_result.version_infos,
       npm_keys: npm_keys,
       provenance: security.provenance,
+      hash_pins: hash_pins,
     )
   // 1. 다운로드 & 저장 (sha256 + has_scripts 업데이트)
   use download_results <- result.try(download_and_store_all(
@@ -202,6 +215,25 @@ fn check_offline_packages(
   }
 }
 
+/// hash pin 검증 — .kir-hashes에 핀이 있으면 대조
+fn verify_hash_pin(
+  pkg: ResolvedPackage,
+  hash: String,
+  ctx: DownloadContext,
+) -> Result(Nil, PipelineError) {
+  case hashpin.check(ctx.hash_pins, pkg.name, pkg.registry, hash) {
+    hashpin.PinMatched(_, _) -> Ok(Nil)
+    hashpin.PinMismatch(name, registry, actual, allowed) ->
+      Error(HashPinMismatch(
+        name: name,
+        registry: registry,
+        actual: actual,
+        allowed: allowed,
+      ))
+    hashpin.NoPinEntry -> Ok(Nil)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 다운로드 & 저장
 // ---------------------------------------------------------------------------
@@ -219,6 +251,7 @@ type DownloadContext {
     version_infos: dict.Dict(String, resolver.VersionInfo),
     npm_keys: List(#(String, String)),
     provenance: types.ProvenancePolicy,
+    hash_pins: hashpin.HashPins,
   )
 }
 
@@ -402,6 +435,8 @@ fn download_and_store_one(
         dl_config.backoff_ms,
       ))
       let data_size = bit_array.byte_size(data)
+      // hash pin 검증 (.kir-hashes)
+      use _ <- result.try(verify_hash_pin(pkg, sha256, ctx))
       // npm Sigstore 서명 검증 (다운로드 후, store 전)
       use _ <- result.try(verify_provenance_if_npm(pkg, data, ctx))
       // npm SRI integrity 검증

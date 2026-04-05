@@ -27,6 +27,7 @@ fn sample_config() -> KirConfig {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     hex_dev_deps: [
@@ -36,6 +37,7 @@ fn sample_config() -> KirConfig {
         registry: Hex,
         dev: True,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     npm_deps: [
@@ -45,6 +47,7 @@ fn sample_config() -> KirConfig {
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     npm_dev_deps: [],
@@ -145,6 +148,7 @@ pub fn add_dependency_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let updated = config.add_dependency(cfg, dep)
   assert list.length(updated.hex_deps) == 1
@@ -160,6 +164,7 @@ pub fn add_dependency_upsert_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let dep_v2 =
     Dependency(
@@ -168,6 +173,7 @@ pub fn add_dependency_upsert_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let cfg =
     KirConfig(
@@ -204,6 +210,7 @@ pub fn remove_dependency_test() {
       registry: Npm,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let cfg =
     KirConfig(

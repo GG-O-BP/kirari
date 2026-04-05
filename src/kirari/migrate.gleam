@@ -122,6 +122,7 @@ fn decode_gleam_deps(
               registry: Hex,
               dev: dev,
               optional: False,
+              package_name: Error(Nil),
             ))
           _ -> Error(Nil)
         }
@@ -205,6 +206,7 @@ pub fn parse_package_json(
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       )
     })
   let npm_dev_deps =
@@ -217,6 +219,7 @@ pub fn parse_package_json(
         registry: Npm,
         dev: True,
         optional: False,
+        package_name: Error(Nil),
       )
     })
 

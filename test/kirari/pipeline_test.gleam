@@ -33,6 +33,7 @@ pub fn run_skips_cached_packages_test() {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     )
   let resolve_result =
     ResolveResult(packages: [pkg], version_infos: dict.new(), peer_warnings: [])

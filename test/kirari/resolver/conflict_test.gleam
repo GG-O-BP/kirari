@@ -175,6 +175,7 @@ pub fn suggest_override_for_conflict_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
     Dependency(
       name: "pkg_b",
@@ -182,6 +183,7 @@ pub fn suggest_override_for_conflict_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
   ]
   let suggestions = conflict.suggest(causes, direct_deps, available)
@@ -215,6 +217,7 @@ pub fn suggest_relax_for_no_matching_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
   ]
   let suggestions = conflict.suggest(causes, direct_deps, available)
@@ -247,6 +250,7 @@ pub fn suggest_remove_for_no_versions_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
   ]
   let suggestions = conflict.suggest(causes, direct_deps, available)
@@ -291,6 +295,7 @@ pub fn suggest_use_version_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
     Dependency(
       name: "pkg_b",
@@ -298,6 +303,7 @@ pub fn suggest_use_version_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
   ]
   let suggestions = conflict.suggest(causes, direct_deps, available)
@@ -423,6 +429,7 @@ pub fn build_report_integration_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
     Dependency(
       name: "pkg_b",
@@ -430,6 +437,7 @@ pub fn build_report_integration_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     ),
   ]
   let report = conflict.build_report(combined, direct_deps, available)

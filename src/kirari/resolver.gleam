@@ -237,18 +237,33 @@ pub fn resolve_full_with_deps(
   }
   let overrides = overrides_to_dict(config.overrides)
 
-  // FetchVersions를 PubGrub 형식으로 변환
+  // alias 매핑 구축: local_name:registry → real_name
+  let alias_map =
+    list.fold(direct_deps, dict.new(), fn(acc, d) {
+      case d.package_name {
+        Ok(real) -> {
+          let key = d.name <> ":" <> types.registry_to_string(d.registry)
+          dict.insert(acc, key, real)
+        }
+        Error(_) -> acc
+      }
+    })
+
+  // FetchVersions를 PubGrub 형식으로 변환 (alias-aware)
   let pubgrub_fetch = fn(name: String, registry: Registry) {
+    // alias된 패키지면 실제 이름으로 레지스트리 조회
+    let effective = resolve_effective_fetch_name(name, registry, alias_map)
     use vis <- result.try(
-      fetch(name, registry)
+      fetch(effective, registry)
       |> result.map_error(convert_error),
     )
     Ok(list.map(vis, version_info_to_compact))
   }
 
-  // FetchReleaseDeps를 PubGrub 형식으로 변환
+  // FetchReleaseDeps를 PubGrub 형식으로 변환 (alias-aware)
   let pubgrub_fetch_deps = fn(name: String, version: String, registry: Registry) {
-    fetch_deps(name, version, registry)
+    let effective = resolve_effective_fetch_name(name, registry, alias_map)
+    fetch_deps(effective, version, registry)
     |> result.map_error(convert_error)
   }
 
@@ -263,6 +278,7 @@ pub fn resolve_full_with_deps(
       exclude_newer: exclude_newer,
       overrides: overrides,
       prefetch_cache: prefetch_cache,
+      alias_map: alias_map,
     )
 
   use solve_result <- result.try(
@@ -495,6 +511,7 @@ fn fetch_release_deps_offline(
             registry: Hex,
             dev: False,
             optional: False,
+            package_name: Error(Nil),
           )
         })
       let deprecated = case info.retired {
@@ -543,6 +560,7 @@ fn fetch_release_deps_impl(
             registry: Hex,
             dev: False,
             optional: False,
+            package_name: Error(Nil),
           )
         })
       let deprecated = case info.retired {
@@ -580,6 +598,7 @@ fn fetch_hex_versions(
             registry: Hex,
             dev: False,
             optional: False,
+            package_name: Error(Nil),
           )
         }),
         peer_dependencies: [],
@@ -618,6 +637,7 @@ fn fetch_npm_versions(
             registry: Npm,
             dev: False,
             optional: False,
+            package_name: Error(Nil),
           )
         }),
         peer_dependencies: list.map(v.peer_dependencies, fn(p) {
@@ -635,6 +655,7 @@ fn fetch_npm_versions(
             registry: Npm,
             dev: False,
             optional: True,
+            package_name: Error(Nil),
           )
         }),
         os: v.os,
@@ -673,6 +694,7 @@ fn fetch_hex_versions_offline(
             registry: Hex,
             dev: False,
             optional: False,
+            package_name: Error(Nil),
           )
         }),
         peer_dependencies: [],
@@ -710,6 +732,7 @@ fn fetch_npm_versions_offline(
             registry: Npm,
             dev: False,
             optional: False,
+            package_name: Error(Nil),
           )
         }),
         peer_dependencies: list.map(v.peer_dependencies, fn(p) {
@@ -727,6 +750,7 @@ fn fetch_npm_versions_offline(
             registry: Npm,
             dev: False,
             optional: True,
+            package_name: Error(Nil),
           )
         }),
         os: v.os,
@@ -744,6 +768,19 @@ fn fetch_npm_versions_offline(
 // ---------------------------------------------------------------------------
 // Override 변환
 // ---------------------------------------------------------------------------
+
+/// alias_map에서 실제 레지스트리 조회용 이름 결정
+fn resolve_effective_fetch_name(
+  name: String,
+  registry: Registry,
+  alias_map: Dict(String, String),
+) -> String {
+  let key = name <> ":" <> types.registry_to_string(registry)
+  case dict.get(alias_map, key) {
+    Ok(real) -> real
+    Error(_) -> name
+  }
+}
 
 fn overrides_to_dict(overrides: List(Override)) -> Dict(String, String) {
   list.fold(overrides, dict.new(), fn(acc, o) {

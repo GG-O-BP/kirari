@@ -30,6 +30,7 @@ fn test_config() -> KirConfig {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     hex_dev_deps: [],
@@ -40,6 +41,7 @@ fn test_config() -> KirConfig {
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     npm_dev_deps: [],
@@ -63,6 +65,7 @@ fn test_lock() -> KirLock {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -73,6 +76,7 @@ fn test_lock() -> KirLock {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     ),
   ])
 }
@@ -179,6 +183,7 @@ pub fn transitive_deps_tree_test() {
           registry: Hex,
           dev: False,
           optional: False,
+          package_name: Error(Nil),
         ),
       ],
       npm_deps: [],
@@ -194,6 +199,7 @@ pub fn transitive_deps_tree_test() {
         platform: Error(Nil),
         license: "",
         dev: False,
+        package_name: Error(Nil),
       ),
       ResolvedPackage(
         name: "gleam_stdlib",
@@ -204,6 +210,7 @@ pub fn transitive_deps_tree_test() {
         platform: Error(Nil),
         license: "",
         dev: False,
+        package_name: Error(Nil),
       ),
     ])
   let vis =
@@ -221,6 +228,7 @@ pub fn transitive_deps_tree_test() {
               registry: Hex,
               dev: False,
               optional: False,
+              package_name: Error(Nil),
             ),
           ],
           peer_dependencies: [],

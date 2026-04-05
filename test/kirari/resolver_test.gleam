@@ -80,6 +80,7 @@ fn mock_fetch(
               registry: Hex,
               dev: False,
               optional: False,
+              package_name: Error(Nil),
             ),
           ],
           peer_dependencies: [],
@@ -155,6 +156,7 @@ fn mock_fetch(
               registry: Hex,
               dev: False,
               optional: False,
+              package_name: Error(Nil),
             ),
           ],
           peer_dependencies: [],
@@ -181,6 +183,7 @@ fn mock_fetch(
               registry: Hex,
               dev: False,
               optional: False,
+              package_name: Error(Nil),
             ),
           ],
           peer_dependencies: [],
@@ -267,6 +270,7 @@ pub fn resolve_simple_hex_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(resolved) =
@@ -287,6 +291,7 @@ pub fn resolve_simple_npm_test() {
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(resolved) =
@@ -310,6 +315,7 @@ pub fn resolve_not_found_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Error(resolver.PackageNotFound("nonexistent", Hex)) =
@@ -329,6 +335,7 @@ pub fn resolve_incompatible_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Error(resolver.ResolutionConflict(_, _)) =
@@ -348,6 +355,7 @@ pub fn resolve_prefers_lock_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let lock =
@@ -361,6 +369,7 @@ pub fn resolve_prefers_lock_test() {
         platform: Error(Nil),
         license: "",
         dev: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(resolved) = resolver.resolve_with(config, Ok(lock), mock_fetch)
@@ -383,6 +392,7 @@ pub fn resolve_exclude_newer_test() {
           registry: Hex,
           dev: False,
           optional: False,
+          package_name: Error(Nil),
         ),
       ]),
       security: types.SecurityConfig(
@@ -410,6 +420,7 @@ pub fn resolve_mixed_registries_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
       Dependency(
         name: "highlight.js",
@@ -417,6 +428,7 @@ pub fn resolve_mixed_registries_test() {
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(resolved) =
@@ -438,6 +450,7 @@ pub fn resolve_transitive_deps_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(resolved) =
@@ -468,6 +481,7 @@ pub fn resolve_diamond_conflict_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
       Dependency(
         name: "pkg_b",
@@ -475,6 +489,7 @@ pub fn resolve_diamond_conflict_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Error(resolver.ResolutionConflict(explanation, report)) =
@@ -499,6 +514,7 @@ pub fn resolve_diamond_compatible_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
       Dependency(
         name: "gleam_json",
@@ -506,6 +522,7 @@ pub fn resolve_diamond_compatible_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(resolved) =
@@ -539,6 +556,7 @@ pub fn classify_dev_pure_prod_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(result) =
@@ -563,6 +581,7 @@ pub fn classify_dev_pure_dev_test() {
         registry: Hex,
         dev: True,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   let assert Ok(result) =
@@ -591,6 +610,7 @@ pub fn classify_dev_shared_transitive_test() {
           registry: Hex,
           dev: False,
           optional: False,
+          package_name: Error(Nil),
         ),
       ],
       hex_dev_deps: [
@@ -600,6 +620,7 @@ pub fn classify_dev_shared_transitive_test() {
           registry: Hex,
           dev: True,
           optional: False,
+          package_name: Error(Nil),
         ),
       ],
     )
@@ -633,6 +654,7 @@ pub fn classify_dev_only_chain_test() {
           registry: Hex,
           dev: False,
           optional: False,
+          package_name: Error(Nil),
         ),
       ],
       npm_dev_deps: [
@@ -642,6 +664,7 @@ pub fn classify_dev_only_chain_test() {
           registry: Npm,
           dev: True,
           optional: False,
+          package_name: Error(Nil),
         ),
       ],
     )

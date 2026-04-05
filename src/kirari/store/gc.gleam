@@ -56,16 +56,20 @@ pub fn gc_all() -> Result(#(GcResult, GcResult), GcError) {
 }
 
 /// 이름 매핑 기반 선택적 GC — lockfile에서 SHA256→(name, version) 매핑 전달
+/// Hex는 불변이므로 only/keep 필터가 있을 때만 처리 (max_age 무시)
 pub fn gc_selective(
   policy: GcPolicy,
   name_map: dict.Dict(String, #(String, String)),
 ) -> Result(#(GcResult, GcResult), GcError) {
-  let hex_policy =
-    GcPolicy(..policy, max_age_days: case policy.max_age_days {
-      0 -> 0
-      n -> n
-    })
-  use hex_result <- result.try(gc_hex_selective(hex_policy, name_map))
+  let hex_has_filters = policy.only != [] || policy.keep != []
+  use hex_result <- result.try(case hex_has_filters {
+    True -> {
+      // hex는 only/keep 기반 삭제만, 시간 기반 만료 없음
+      let hex_policy = GcPolicy(..policy, max_age_days: 0)
+      gc_hex_selective(hex_policy, name_map)
+    }
+    False -> Ok(GcResult(removed_count: 0, removed_packages: []))
+  })
   use npm_result <- result.try(gc_npm_selective(policy))
   Ok(#(hex_result, npm_result))
 }

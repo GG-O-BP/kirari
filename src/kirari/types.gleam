@@ -42,7 +42,17 @@ pub type Dependency {
     registry: Registry,
     dev: Bool,
     optional: Bool,
+    /// npm alias 시 실제 패키지 이름 (예: "npm:react@^18" → Ok("react"))
+    package_name: Result(String, Nil),
   )
+}
+
+/// 레지스트리 조회용 실제 이름 반환 (alias-aware)
+pub fn effective_name(dep: Dependency) -> String {
+  case dep.package_name {
+    Ok(real) -> real
+    Error(_) -> dep.name
+  }
 }
 
 /// gleam.toml에 선언된 로컬 경로 의존성 (gleam이 직접 관리)
@@ -71,7 +81,17 @@ pub type ResolvedPackage {
     license: String,
     /// dev-only 패키지 여부 (production에서 도달 불가능하면 True)
     dev: Bool,
+    /// npm alias 시 실제 패키지 이름
+    package_name: Result(String, Nil),
   )
+}
+
+/// 해결된 패키지의 레지스트리 조회용 실제 이름
+pub fn resolved_effective_name(pkg: ResolvedPackage) -> String {
+  case pkg.package_name {
+    Ok(real) -> real
+    Error(_) -> pkg.name
+  }
 }
 
 /// npm 패키지의 플랫폼 제약

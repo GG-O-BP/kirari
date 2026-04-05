@@ -5,6 +5,7 @@ import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import kirari/cli/engines
@@ -18,6 +19,7 @@ import kirari/cli/progress
 import kirari/config
 import kirari/export
 import kirari/ffi as ffi_detect
+import kirari/hashpin
 import kirari/installer
 import kirari/lockfile
 import kirari/migrate
@@ -43,7 +45,61 @@ import simplifile
 // ---------------------------------------------------------------------------
 
 pub fn do_init(dir: String) -> Result(Nil, KirError) {
-  io.println("Initializing kirari...")
+  do_init_with_template(dir, "basic")
+}
+
+/// Template 종류
+type InitTemplate {
+  BasicTemplate
+  AdvancedTemplate
+}
+
+fn parse_template(s: String) -> Result(InitTemplate, KirError) {
+  case string.lowercase(s) {
+    "basic" -> Ok(BasicTemplate)
+    "advanced" -> Ok(AdvancedTemplate)
+    _ ->
+      Error(UserError(
+        detail: "unknown template: " <> s <> " (use basic or advanced)",
+      ))
+  }
+}
+
+/// Template에 따라 보안/엔진 설정 적용 (순수 함수)
+fn apply_template(
+  cfg: types.KirConfig,
+  template: InitTemplate,
+) -> types.KirConfig {
+  case template {
+    BasicTemplate -> cfg
+    AdvancedTemplate ->
+      types.KirConfig(
+        ..cfg,
+        security: types.SecurityConfig(
+          exclude_newer: cfg.security.exclude_newer,
+          npm_scripts: types.DenyAll,
+          provenance: types.ProvenanceRequire,
+          license_policy: types.LicenseAllow([
+            "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC",
+          ]),
+          audit_ignore: [],
+        ),
+        engines: types.EnginesConfig(
+          gleam: Ok(">= 1.0.0"),
+          erlang: Ok(">= 26"),
+          node: Error(Nil),
+        ),
+      )
+  }
+}
+
+/// Template 기반 init
+pub fn do_init_with_template(
+  dir: String,
+  template_str: String,
+) -> Result(Nil, KirError) {
+  use template <- result.try(parse_template(template_str))
+  io.println("Initializing kirari (template: " <> template_str <> ")...")
   use cfg <- result.try(
     config.read_config(dir)
     |> result.map_error(ConfigErr),
@@ -53,12 +109,18 @@ pub fn do_init(dir: String) -> Result(Nil, KirError) {
     Error(_) -> []
   }
   let merged = merge_npm_deps(cfg, npm_deps)
+  let templated = apply_template(merged, template)
   use _ <- result.try(
-    config.write_config(merged, dir)
+    config.write_config(templated, dir)
     |> result.map_error(ConfigErr),
   )
   io.println(
-    output.color_green("Initialized") <> " gleam.toml with kirari sections",
+    output.color_green("Initialized")
+    <> " gleam.toml with kirari sections"
+    <> case template {
+      BasicTemplate -> ""
+      AdvancedTemplate -> " (advanced security + engines)"
+    },
   )
   Ok(Nil)
 }
@@ -492,6 +554,7 @@ pub fn do_add(
       registry: registry,
       dev: is_dev,
       optional: False,
+      package_name: Error(Nil),
     )
   let updated = config.add_dependency(cfg, dep)
   use _ <- result.try(
@@ -1106,6 +1169,110 @@ fn print_gc_results(
     <> int.to_string(npm_result.removed_count)
     <> " npm packages",
   )
+}
+
+// ---------------------------------------------------------------------------
+// hash pin/verify
+// ---------------------------------------------------------------------------
+
+pub fn do_hash_pin(dir: String, name: String) -> Result(Nil, KirError) {
+  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
+  use pins <- result.try(
+    hashpin.read(dir)
+    |> result.map_error(fn(e) {
+      UserError(detail: ".kir-hashes error: " <> string.inspect(e))
+    }),
+  )
+  // lock에서 패키지 찾기 (hex → npm 순서)
+  let found = case lockfile.find_package(lock, name, Hex) {
+    Some(pkg) -> Ok(pkg)
+    None ->
+      case lockfile.find_package(lock, name, Npm) {
+        Some(pkg) -> Ok(pkg)
+        None -> Error(Nil)
+      }
+  }
+  case found {
+    Ok(pkg) -> {
+      let updated = hashpin.add_hash(pins, pkg.name, pkg.registry, pkg.sha256)
+      use _ <- result.try(
+        hashpin.write(updated, dir)
+        |> result.map_error(fn(_) {
+          UserError(detail: "failed to write .kir-hashes")
+        }),
+      )
+      io.println(
+        output.color_green("Pinned")
+        <> " "
+        <> name
+        <> " ("
+        <> types.registry_to_string(pkg.registry)
+        <> ") hash: "
+        <> string.slice(pkg.sha256, 0, 12)
+        <> "...",
+      )
+      Ok(Nil)
+    }
+    Error(_) ->
+      Error(UserError(detail: "package not found in kir.lock: " <> name))
+  }
+}
+
+pub fn do_hash_verify(dir: String) -> Result(Nil, KirError) {
+  use lock <- result.try(lockfile.read(dir) |> result.map_error(LockErr))
+  use pins <- result.try(
+    hashpin.read(dir)
+    |> result.map_error(fn(e) {
+      UserError(detail: ".kir-hashes error: " <> string.inspect(e))
+    }),
+  )
+  let results = hashpin.check_all(pins, lock.packages)
+  case results {
+    [] -> {
+      io.println(output.color_dim("No pinned packages found in .kir-hashes"))
+      Ok(Nil)
+    }
+    _ -> {
+      let ok_count =
+        list.count(results, fn(r) {
+          case r {
+            hashpin.PinMatched(_, _) -> True
+            _ -> False
+          }
+        })
+      let fail_count = list.length(results) - ok_count
+      list.each(results, fn(r) {
+        case r {
+          hashpin.PinMatched(name, registry) ->
+            io.println(
+              output.color_green("  ✓ ")
+              <> name
+              <> " ("
+              <> types.registry_to_string(registry)
+              <> ")",
+            )
+          hashpin.PinMismatch(name, registry, actual, _allowed) ->
+            io.println(
+              output.color_red("  ✗ ")
+              <> name
+              <> " ("
+              <> types.registry_to_string(registry)
+              <> ") hash mismatch: "
+              <> string.slice(actual, 0, 12)
+              <> "...",
+            )
+          hashpin.NoPinEntry -> Nil
+        }
+      })
+      io.println(
+        int.to_string(ok_count)
+        <> " ok, "
+        <> int.to_string(fail_count)
+        <> " failed",
+      )
+      Ok(Nil)
+    }
+  }
 }
 
 fn detect_registry(name: String) -> types.Registry {

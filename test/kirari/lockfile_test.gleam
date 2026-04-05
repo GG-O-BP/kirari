@@ -20,6 +20,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     ),
     ResolvedPackage(
       name: "highlight.js",
@@ -30,6 +31,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     ),
     ResolvedPackage(
       name: "gleam_json",
@@ -40,6 +42,7 @@ fn sample_packages() -> List(ResolvedPackage) {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     ),
   ]
 }
@@ -128,6 +131,7 @@ pub fn verify_frozen_mismatch_test() {
       platform: Error(Nil),
       license: "",
       dev: False,
+      package_name: Error(Nil),
     ),
   ]
   let assert Error(lockfile.FrozenMismatch(_)) =

@@ -44,6 +44,9 @@ kir.toml은 존재하지 않는다.
 23. 다운로드 파이프라인 설정 — DownloadConfig 타입, [security] max-retries/timeout/parallel/backoff, CLI 플래그 오버라이드, 배치 단위 병렬화
 24. 선택적 store 정리 — kir clean --store에 --dry-run/--only/--keep/--max-age, 이름 기반 GC 필터링, lockfile SHA256→name 매핑
 25. Git merge conflict 자동 해결 — kir lock resolve, merge marker 감지/제거, gleam.toml에서 재해결, diff 출력
+26. npm 패키지 alias — "npm:react@^18.0.0" 형식, Dependency/ResolvedPackage에 package_name 필드, alias-aware resolver fetch/lockfile/config
+27. kir init 템플릿 — --template=basic|advanced, apply_template 순수 함수, advanced는 ProvenanceRequire+LicenseAllow+engines
+28. 해시 핀닝 — .kir-hashes TOML ���립 해시 허용 목록, hashpin.gleam 모듈, pipeline 통합, kir hash pin/verify CLI
 
 ## 명령어
 

@@ -36,6 +36,7 @@ pub fn find_undeclared_filters_declared_test() {
           registry: Npm,
           dev: False,
           optional: False,
+          package_name: Error(Nil),
         ),
       ],
       npm_dev_deps: [],

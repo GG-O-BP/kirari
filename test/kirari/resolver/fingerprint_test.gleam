@@ -27,6 +27,7 @@ fn base_config() -> KirConfig {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     hex_dev_deps: [],
@@ -37,6 +38,7 @@ fn base_config() -> KirConfig {
         registry: Npm,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ],
     npm_dev_deps: [],
@@ -80,6 +82,7 @@ pub fn adding_dep_changes_hash_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
       Dependency(
         name: "gleam_json",
@@ -87,6 +90,7 @@ pub fn adding_dep_changes_hash_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   assert fingerprint.compute(config1) != fingerprint.compute(config2)
@@ -116,6 +120,7 @@ pub fn changing_constraint_changes_hash_test() {
         registry: Hex,
         dev: False,
         optional: False,
+        package_name: Error(Nil),
       ),
     ])
   assert fingerprint.compute(config1) != fingerprint.compute(config2)
@@ -167,6 +172,7 @@ pub fn dep_order_does_not_matter_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let dep_b =
     Dependency(
@@ -175,6 +181,7 @@ pub fn dep_order_does_not_matter_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let config1 = KirConfig(..base_config(), hex_deps: [dep_a, dep_b])
   let config2 = KirConfig(..base_config(), hex_deps: [dep_b, dep_a])
@@ -193,6 +200,7 @@ pub fn dev_vs_prod_different_hash_test() {
       registry: Hex,
       dev: False,
       optional: False,
+      package_name: Error(Nil),
     )
   let config1 = KirConfig(..base_config(), hex_deps: [dep], hex_dev_deps: [])
   let config2 = KirConfig(..base_config(), hex_deps: [], hex_dev_deps: [dep])
