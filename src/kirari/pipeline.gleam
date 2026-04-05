@@ -629,12 +629,13 @@ fn resolve_tarball_url(pkg: ResolvedPackage, url: String) -> String {
           <> pkg.version
           <> ".tar"
         Npm -> {
-          let base = case string.split(pkg.name, "/") {
+          let effective = types.resolved_effective_name(pkg)
+          let base = case string.split(effective, "/") {
             [_scope, name, ..] -> name
-            _ -> pkg.name
+            _ -> effective
           }
           "https://registry.npmjs.org/"
-          <> npm.encode_package_name(pkg.name)
+          <> npm.encode_package_name(effective)
           <> "/-/"
           <> base
           <> "-"
@@ -678,7 +679,11 @@ fn download_tarball(
         DownloadError(pkg.name, pkg.version, string.inspect(e))
       })
     Npm | Url ->
-      npm.download_tarball(pkg.name, pkg.version, tarball_url)
+      npm.download_tarball(
+        types.resolved_effective_name(pkg),
+        pkg.version,
+        tarball_url,
+      )
       |> result.map_error(fn(e) {
         DownloadError(pkg.name, pkg.version, string.inspect(e))
       })

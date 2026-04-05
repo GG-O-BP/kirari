@@ -26,6 +26,7 @@ import kirari/migrate
 import kirari/pipeline
 import kirari/platform
 import kirari/registry/cache
+import kirari/registry/hex as hex_registry
 import kirari/registry/npm as npm_registry
 import kirari/resolver
 import kirari/resolver/fingerprint
@@ -498,13 +499,11 @@ pub fn do_update_selective(
 // ---------------------------------------------------------------------------
 
 /// pkg@version 형식 파싱 (scoped npm 패키지 @scope/pkg@ver 처리)
+/// npm도 hex와 동일한 형식으로 저장하되, npm 전용 구문(^, ~, *)은 보존
 pub fn parse_add_arg(raw: String, is_npm: Bool) -> #(String, String) {
-  let is_scoped_npm = is_npm || string.starts_with(raw, "@")
-  let default_version = case is_scoped_npm {
-    True -> "*"
-    False -> ">= 0.0.0"
-  }
-  let #(name, ver) = case is_scoped_npm {
+  let is_scoped = string.starts_with(raw, "@")
+  let default_version = ">= 0.0.0"
+  let #(name, ver) = case is_scoped {
     True -> {
       let without_prefix = string.drop_start(raw, 1)
       case string.split(without_prefix, "@") {
@@ -520,10 +519,18 @@ pub fn parse_add_arg(raw: String, is_npm: Bool) -> #(String, String) {
         _ -> #(raw, default_version)
       }
   }
-  case is_scoped_npm {
+  case is_npm && is_npm_style_constraint(ver) {
     True -> #(name, ver)
     False -> #(name, semver.normalize_hex_constraint(ver))
   }
+}
+
+/// npm 전용 제약 구문인지 판별 (^, ~, *, ||)
+fn is_npm_style_constraint(ver: String) -> Bool {
+  string.starts_with(ver, "^")
+  || string.starts_with(ver, "~")
+  || ver == "*"
+  || string.contains(ver, "||")
 }
 
 pub fn do_add(
@@ -1136,54 +1143,130 @@ fn merge_npm_deps(cfg: KirConfig, npm_deps: List(Dependency)) -> KirConfig {
   )
 }
 
-/// npm dist-tag면 레지스트리에서 해결, 아니면 그대로 반환
+/// 버전 미지정이면 레지스트리에서 최신 버전을 가져와 hex 형식 범위 생성,
+/// npm dist-tag이면 해당 태그 해결, 그 외는 그대로 반환
 fn resolve_add_constraint(
   name: String,
   constraint: String,
   registry: types.Registry,
 ) -> Result(String, KirError) {
-  case registry, semver.is_dist_tag(constraint) {
-    Npm, True -> {
-      io.println(
-        "Resolving dist-tag \"" <> constraint <> "\" for " <> name <> "...",
-      )
+  case constraint {
+    // 버전 미지정 — 레지스트리에서 최신 버전 조회
+    ">= 0.0.0" -> fetch_latest_constraint(name, registry)
+    _ ->
+      case registry, semver.is_dist_tag(constraint) {
+        Npm, True -> {
+          io.println(
+            "Resolving dist-tag \"" <> constraint <> "\" for " <> name <> "...",
+          )
+          case npm_registry.get_versions_with_tags(name) {
+            Ok(result) ->
+              case dict.get(result.dist_tags, constraint) {
+                Ok(version) -> {
+                  let resolved = semver.normalize_hex_constraint(version)
+                  io.println(
+                    "  "
+                    <> constraint
+                    <> " -> "
+                    <> version
+                    <> " (using "
+                    <> resolved
+                    <> ")",
+                  )
+                  Ok(resolved)
+                }
+                Error(_) ->
+                  Error(UserError(
+                    detail: "unknown npm dist-tag \""
+                    <> constraint
+                    <> "\" for "
+                    <> name
+                    <> ". Available tags: "
+                    <> string.join(dict.keys(result.dist_tags), ", "),
+                  ))
+              }
+            Error(e) ->
+              Error(UserError(
+                detail: "failed to fetch dist-tags for "
+                <> name
+                <> ": "
+                <> string.inspect(e),
+              ))
+          }
+        }
+        _, _ -> Ok(constraint)
+      }
+  }
+}
+
+/// 레지스트리에서 최신 버전을 가져와 hex 형식 범위 생성
+fn fetch_latest_constraint(
+  name: String,
+  registry: types.Registry,
+) -> Result(String, KirError) {
+  case registry {
+    Npm ->
       case npm_registry.get_versions_with_tags(name) {
         Ok(result) ->
-          case dict.get(result.dist_tags, constraint) {
-            Ok(version) -> {
-              let resolved = "^" <> version
-              io.println(
-                "  "
-                <> constraint
-                <> " -> "
-                <> version
-                <> " (using "
-                <> resolved
-                <> ")",
-              )
-              Ok(resolved)
-            }
-            Error(_) ->
-              Error(UserError(
-                detail: "unknown npm dist-tag \""
-                <> constraint
-                <> "\" for "
-                <> name
-                <> ". Available tags: "
-                <> string.join(dict.keys(result.dist_tags), ", "),
-              ))
+          case dict.get(result.dist_tags, "latest") {
+            Ok(version) -> Ok(version_to_compatible_range(version))
+            Error(_) -> Ok(">= 0.0.0")
           }
         Error(e) ->
           Error(UserError(
-            detail: "failed to fetch dist-tags for "
+            detail: "failed to fetch latest version for "
             <> name
             <> ": "
             <> string.inspect(e),
           ))
       }
-    }
-    _, _ -> Ok(constraint)
+    Hex ->
+      case hex_registry.get_versions(name) {
+        Ok(versions) ->
+          case latest_version(versions) {
+            Ok(version) -> Ok(version_to_compatible_range(version))
+            Error(_) -> Ok(">= 0.0.0")
+          }
+        Error(e) ->
+          Error(UserError(
+            detail: "failed to fetch latest version for "
+            <> name
+            <> ": "
+            <> string.inspect(e),
+          ))
+      }
+    _ -> Ok(">= 0.0.0")
   }
+}
+
+/// 최신 버전에서 호환 범위 생성 (gleam add 관례 준수)
+/// ">= {resolved_version} and < {major+1}.0.0"
+fn version_to_compatible_range(version: String) -> String {
+  case semver.parse_version(version) {
+    Ok(v) ->
+      ">= "
+      <> version
+      <> " and < "
+      <> int.to_string(semver.major(v) + 1)
+      <> ".0.0"
+    Error(_) -> ">= 0.0.0"
+  }
+}
+
+/// hex 버전 목록에서 pre-release가 아닌 최신 버전 반환
+fn latest_version(
+  versions: List(hex_registry.PackageVersion),
+) -> Result(String, Nil) {
+  versions
+  |> list.filter(fn(v) { !string.contains(v.version, "-") })
+  |> list.sort(fn(a, b) {
+    case semver.parse_version(a.version), semver.parse_version(b.version) {
+      Ok(va), Ok(vb) -> semver.compare(va, vb)
+      _, _ -> string.compare(a.version, b.version)
+    }
+  })
+  |> list.last
+  |> result.map(fn(v) { v.version })
 }
 
 /// 설치 후 무결성 검증 결과 출력

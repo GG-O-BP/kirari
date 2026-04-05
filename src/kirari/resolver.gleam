@@ -397,7 +397,8 @@ fn build_version_infos(
   dict.fold(entries, dict.new(), fn(acc, key, pair) {
     let #(pkg, compact) = pair
     // 레지스트리에서 전체 VersionInfo 조회하여 tarball_url 등 복원
-    let full_vi = case fetch(pkg.name, pkg.registry) {
+    let effective = types.resolved_effective_name(pkg)
+    let full_vi = case fetch(effective, pkg.registry) {
       Ok(vis) ->
         case list.find(vis, fn(v) { v.version == pkg.version }) {
           Ok(vi) -> vi
