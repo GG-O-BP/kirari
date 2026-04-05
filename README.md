@@ -1,8 +1,12 @@
 # kirari
 
-> **This is not a real tool. Do not use it.**
-> An experimental project built purely to learn package manager internals.
-> Use the official Gleam tooling (`gleam add`, `gleam build`, etc.) for all real projects.
+> [!CAUTION]
+> 🚫⚠️ **This is NOT a real tool. Do not install or use it.** ⚠️🚫
+>
+> 🧪 This is an experimental learning project built purely to study package manager internals.
+> It is incomplete, untested against real-world workloads, and may break your project.
+>
+> 👉 **For all real Gleam projects, use the official tooling: `gleam add`, `gleam build`, etc.**
 
 ---
 
